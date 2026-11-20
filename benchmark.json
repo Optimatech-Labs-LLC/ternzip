@@ -1,0 +1,126 @@
+{
+  "checkpoint": "Ternary-Bonsai-8B-Q2_0.gguf",
+  "archive": "ternzip-8b.trits",
+  "model_bytes": {
+    "archive_bytes": 1623736952,
+    "archive_sha256": "19ce2237a410208327f69a9f5eff381d2d6e8ffe9dd750f65a433e7f3c747577",
+    "restored_gguf_bytes": 2182184672,
+    "restored_gguf_sha256": "3c8d70470a5d97e5a2b9410ddd899cb740116591462626c60cb2fead6448f60b",
+    "decoded_quantized_tensors": 254,
+    "decoded_float_tensors": 145,
+    "exact_ternary_weights": 8188239872,
+    "fp16_block_scales": 63970624,
+    "source_scale_bytes": 127941248,
+    "source_header_and_directory_bytes": 5950560,
+    "source_other_tensor_bytes": 1232896,
+    "bytes_saved": 558447720
+  },
+  "hardware": "Apple M4 Pro",
+  "macos": "26.5",
+  "decode": "greedy",
+  "context_tokens": 5120,
+  "load_seconds": [
+    19.56611483299639,
+    18.900799375027418
+  ],
+  "weight_bytes_including_cache_and_reserve": 1999704327,
+  "decoder_reserve_bytes": 8388608,
+  "post_load_peak_rss_bytes": [
+    5298159616,
+    5290655744
+  ],
+  "median_decode_tps": 61.37555516631997,
+  "runs_over_60_tps": 7,
+  "measurements": [
+    {
+      "load": 1,
+      "repeat": 1,
+      "prompt": "story",
+      "input_tokens": 4096,
+      "output_tokens": 901,
+      "decode_tps": 61.31114965279757,
+      "post_decode_physical_footprint_bytes": 3345976608
+    },
+    {
+      "load": 1,
+      "repeat": 1,
+      "prompt": "code",
+      "input_tokens": 4096,
+      "output_tokens": 1024,
+      "decode_tps": 61.78528459413226,
+      "post_decode_physical_footprint_bytes": 3346091296
+    },
+    {
+      "load": 1,
+      "repeat": 2,
+      "prompt": "story",
+      "input_tokens": 4096,
+      "output_tokens": 901,
+      "decode_tps": 61.67917075888884,
+      "post_decode_physical_footprint_bytes": 3346074912
+    },
+    {
+      "load": 1,
+      "repeat": 2,
+      "prompt": "code",
+      "input_tokens": 4096,
+      "output_tokens": 1024,
+      "decode_tps": 58.643109825056364,
+      "post_decode_physical_footprint_bytes": 3346140448
+    },
+    {
+      "load": 2,
+      "repeat": 1,
+      "prompt": "story",
+      "input_tokens": 4096,
+      "output_tokens": 901,
+      "decode_tps": 60.53013413678088,
+      "post_decode_physical_footprint_bytes": 2994048024
+    },
+    {
+      "load": 2,
+      "repeat": 1,
+      "prompt": "code",
+      "input_tokens": 4096,
+      "output_tokens": 1024,
+      "decode_tps": 61.439960679842365,
+      "post_decode_physical_footprint_bytes": 2994048024
+    },
+    {
+      "load": 2,
+      "repeat": 2,
+      "prompt": "story",
+      "input_tokens": 4096,
+      "output_tokens": 901,
+      "decode_tps": 61.50935929033442,
+      "post_decode_physical_footprint_bytes": 2994097176
+    },
+    {
+      "load": 2,
+      "repeat": 2,
+      "prompt": "code",
+      "input_tokens": 4096,
+      "output_tokens": 1024,
+      "decode_tps": 59.95979824348219,
+      "post_decode_physical_footprint_bytes": 2994179096
+    },
+    {
+      "load": 2,
+      "repeat": 3,
+      "prompt": "story",
+      "input_tokens": 4096,
+      "output_tokens": 901,
+      "decode_tps": 62.0171946042692,
+      "post_decode_physical_footprint_bytes": 2994408472
+    },
+    {
+      "load": 2,
+      "repeat": 3,
+      "prompt": "code",
+      "input_tokens": 4096,
+      "output_tokens": 1024,
+      "decode_tps": 59.29078136098033,
+      "post_decode_physical_footprint_bytes": 2994506776
+    }
+  ]
+}
