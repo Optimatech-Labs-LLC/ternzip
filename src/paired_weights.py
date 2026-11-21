@@ -202,7 +202,7 @@ def decode_tensor(record, rows, width, reference, keep_transpose, pool, native_s
         payload=record[edges[i]:edges[i+1]]
         if prediction.active:
             from residual_words import unpack_field
-            trits = unpack_field(payload, prediction.field(part, keys))
+            trits = unpack_field(payload, prediction.field(part, keys), prediction.word_factors)
         else:
             trits = decode_page(payload, keys, bounds)
         if transpose is not None:

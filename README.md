@@ -1,4 +1,42 @@
-# Ternzip: lossless pack of Ternary Bonsai 8B
+# Ternzip
+
+Ternzip compresses Prism ML’s ternary language models. One command restores the original GGUF, including its block scales, tokenizer, metadata and padding. On Apple Silicon, the custom loader can also generate text directly from the archive.
+
+| Prism checkpoint | Original GGUF | Ternzip download | Bytes saved |
+| --- | ---: | ---: | ---: |
+| Ternary Bonsai 2 9B · PTQ1_0 | 1,997,486,976 | 1,860,057,576 | 137,429,400 (6.88%) |
+| Ternary Bonsai 8B · Q2_0 | 2,182,184,672 | 1,623,736,952 | 558,447,720 (25.59%) |
+
+The 9B source already packs five ternary values per byte across most of each weight block. Its 6.88% saving is measured against that dense file. Each row uses its own official source as the baseline. [9B archive](https://huggingface.co/optimatechlabs/ternzip-9b) · [8B archive](https://huggingface.co/optimatechlabs/ternzip-8b)
+
+## Restore or run Ternary Bonsai 2 9B
+
+Download `ternzip-9b.trits`. With CPython 3.14 and stable Rust installed, run this from the Ternzip source directory. It writes `Ternary-Bonsai-2-9B-PTQ1_0.gguf` in the current directory. Set aside 2.00 GB for the output. The launcher caches its Python dependencies and builds the small native codecs. [9B download](https://huggingface.co/optimatechlabs/ternzip-9b/resolve/main/ternzip-9b.trits)
+
+```sh
+./ternzip restore /path/to/ternzip-9b.trits
+```
+
+The command checks the input archive, hashes the written GGUF and compares it with Prism’s published SHA-256 before making the output available. It preserves an existing output file. To choose a different location, supply a second path. To check the restore without writing a GGUF, run `./ternzip verify /path/to/ternzip-9b.trits`. [Prism’s published checksums](https://huggingface.co/prism-ml/Ternary-Bonsai-2-9B-gguf/blob/82265ccc78ddaac4700286a35e9badcc32376dd9/SHA256SUMS)
+
+| 9B file | SHA-256 |
+| --- | --- |
+| Ternzip archive | `a53379d2406c3be10498475e9722818986e534e3bef5cd4690b35ae74bdbd40f` |
+| Restored PTQ1_0 GGUF | `3561df7ac7d26a71ffa991ac2db740b10841c3a350aa2676ccd3ff5d428b4e8b` |
+
+For direct text generation on Apple Silicon, the custom loader uses a checksum-pinned Prism Metal runtime. It reads input embeddings on demand and keeps the compute matrices in their original PTQ1_0 layout. You can also run the restored GGUF with Prism’s llama.cpp fork. The optional vision projector and speculative decoding files are separate downloads from Prism. The released encoder profile covers the 8B model. [Prism’s runtime and file guide](https://huggingface.co/prism-ml/Ternary-Bonsai-2-9B-gguf/blob/82265ccc78ddaac4700286a35e9badcc32376dd9/README.md)
+
+```sh
+./ternzip chat /path/to/ternzip-9b.trits 'What is 17 × 6? Answer with the number only.'
+```
+
+The 9B archive stores all 427 original tensors. The coder uses row, column and scale information to estimate how often each weight value occurs. For 12 matrices it also uses signed row matches in earlier layers. These predictions change how many bits each value costs. The decoder recovers every stored value, including the values the predictor got wrong. [9B decoder](src/bonsai9.py) · [9B loader](src/bonsai9_metal.py)
+
+On an Apple M4 Pro, the 9B loader generated **48.48 tokens/s** on a story and **47.12 tokens/s** on code after processing 4,096 input tokens. Both generated sequences and stopping tokens matched Prism’s control. The top choice and reported target-token loss matched at all **13,371** scored positions. Counted weights, embedding tables, row cache and decoder reserve totaled **1,861,761,958 bytes**. An earlier run of this layout measured about **2.37 GB** for the whole process after generation. [9B benchmark measurements](benchmark-9b.json)
+
+Created using Bonsai by Prism ML. Optimatech Labs modified the distribution by recompressing the official GGUF and adding a loader. This is an unofficial third-party release. Prism’s 9B checkpoint derives from Qwen3.5-9B, copyright 2026 Alibaba Cloud. [Apache License](LICENSE) · [Prism’s 9B notice](licenses/prism-bonsai-2-9b-NOTICE.txt) · [Qwen3.5 license](licenses/qwen3.5-9b-LICENSE.txt)
+
+## Ternary Bonsai 8B
 
 Ternzip packs Prism ML’s complete 2.18 GB ternary checkpoint into a 1.624 GB download. One command restores the official GGUF byte for byte. On Apple Silicon, the custom loader can also run the archive directly. [Download the archive](https://huggingface.co/optimatechlabs/ternzip-8b/resolve/main/ternzip-8b.trits) · [Official source file](https://huggingface.co/prism-ml/Ternary-Bonsai-8B-gguf/blob/c2aefbeb4b24469cd11579c3384b990404c17a30/Ternary-Bonsai-8B-Q2_0.gguf) · [Launch post on X](https://x.com/optimatechlabs/status/2123909382408679628)
 

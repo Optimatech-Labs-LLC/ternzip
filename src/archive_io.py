@@ -61,21 +61,49 @@ def output_file(destination, size, expected):
         temp.unlink(missing_ok=True)
 
 
+def is_bonsai9(path):
+    from bonsai9 import MAGIC
+    with Path(path).open("rb") as stream:
+        tag = stream.read(8)
+    if tag not in (b"QTile001", MAGIC):
+        raise ValueError("Unrecognized Ternzip archive header")
+    return tag == MAGIC
+
+
+def source_name(archive):
+    from bonsai9 import SOURCE_NAME as nine_name
+    return nine_name if is_bonsai9(archive) else SOURCE_NAME
+
+
 def restore(archive, destination=None):
-    from paired_archive import PairImage
-    from ternary_codec import original_chunks
-    with checked_input(archive, ARCHIVE_SIZE, ARCHIVE_SHA) as (_, data):
-        image = PairImage(data)
+    if is_bonsai9(archive):
+        import bonsai9
+        size, digest = bonsai9.SOURCE_SIZE, bonsai9.SOURCE_SHA
+        archive_size, archive_sha = bonsai9.ARCHIVE_SIZE, bonsai9.ARCHIVE_SHA
+
+        def chunks(data):
+            return bonsai9.NineArchive(data).original_chunks()
+    else:
+        from paired_archive import PairImage
+        from ternary_codec import original_chunks
+        size, digest = SOURCE_SIZE, SOURCE_SHA
+        archive_size, archive_sha = ARCHIVE_SIZE, ARCHIVE_SHA
+
+        def chunks(data):
+            return original_chunks(PairImage(data))
+
+    with checked_input(archive, archive_size, archive_sha) as (_, data):
         if destination is not None:
-            with output_file(destination, SOURCE_SIZE, SOURCE_SHA) as out:
-                for chunk in original_chunks(image):
-                    out.write(chunk)
+            with output_file(destination, size, digest) as out:
+                for chunk in chunks(data):
+                    if out.write(chunk) != len(chunk):
+                        raise OSError("Short write during GGUF restore")
         else:
-            size = 0
-            digest = hashlib.sha256()
-            for chunk in original_chunks(image):
-                digest.update(chunk)
-                size += len(chunk)
-            if size != SOURCE_SIZE or digest.hexdigest() != SOURCE_SHA:
+            count = 0
+            checksum = hashlib.sha256()
+            for chunk in chunks(data):
+                checksum.update(chunk)
+                count += len(chunk)
+            if count != size or checksum.hexdigest() != digest:
                 raise ValueError("Restored GGUF failed the publisher checksum")
-    return {"bytes": SOURCE_SIZE, "sha256": SOURCE_SHA}
+    return {"bytes": size, "sha256": digest}

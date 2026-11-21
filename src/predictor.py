@@ -38,8 +38,7 @@ class Predictor:
                 words = factors
             if options[0]:
                 self.axes = odds_table(bounds), row_fix, col_fix
-        if words is not None and not (layers and layers[0].scalar):
-            raise ValueError("This archive requires scalar entropy streams")
+        self.word_factors = None if layers and layers[0].scalar else words
         if self.mapping is not None and self.axes is None:
             self.row_lookup = interval_lookup(bounds, self.row_odds)
         ids, flips = self.mapping, self.flips

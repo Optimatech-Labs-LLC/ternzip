@@ -36,15 +36,15 @@ def dependencies_ready():
 def main():
     if sys.version_info[:2] != (3, 14):
         raise RuntimeError("This release uses CPython 3.14 with compression.zstd.")
-    from archive_io import ARCHIVE_NAME, SOURCE_NAME
+    from archive_io import ARCHIVE_NAME
     parser = argparse.ArgumentParser(prog="ternzip", description="Lossless ternary model archive tools.")
     actions = parser.add_subparsers(dest="command", required=True)
     restore_cmd = actions.add_parser("restore", help="Write and verify the exact official GGUF")
     restore_cmd.add_argument("archive", type=Path)
-    restore_cmd.add_argument("output", type=Path, nargs="?", default=Path(SOURCE_NAME))
+    restore_cmd.add_argument("output", type=Path, nargs="?", help="Defaults to Prism's original filename")
     verify = actions.add_parser("verify", help="Restore into a checksum without writing a GGUF")
     verify.add_argument("archive", type=Path)
-    pack = actions.add_parser("pack", help="Encode the official GGUF into the pinned archive")
+    pack = actions.add_parser("pack", help="Rebuild the 8B archive using the released 8B encoder profile")
     pack.add_argument("gguf", type=Path)
     pack.add_argument("output", type=Path, nargs="?", default=Path(ARCHIVE_NAME))
     chat_cmd = actions.add_parser("chat", help="Generate a reply on an Apple Silicon Mac")
@@ -73,8 +73,9 @@ def main():
             from metal_backend import install
             os.environ["TERNZIP_BACKEND"] = str(install(cache))
     if args.command in ("restore", "verify"):
-        from archive_io import restore
-        report = restore(args.archive, args.output if args.command == "restore" else None)
+        from archive_io import restore, source_name
+        output = (args.output or Path(source_name(args.archive))) if args.command == "restore" else None
+        report = restore(args.archive, output)
     elif args.command == "pack":
         from encoder import encode
         report = encode(args.gguf, args.output)

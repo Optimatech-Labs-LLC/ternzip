@@ -4,7 +4,7 @@ import gc
 import math
 import time
 
-from archive_io import ARCHIVE_SHA, ARCHIVE_SIZE, checked_input
+from archive_io import ARCHIVE_SHA, ARCHIVE_SIZE, checked_input, is_bonsai9
 from model_stream import PackedStream
 from native_engine import NativeEngine, NativeTokenizer
 from paired_archive import PairImage
@@ -47,7 +47,12 @@ def chat(path, prompt, context, maximum):
     if not 1 <= maximum < context:
         raise ValueError("The output limit must be positive and fit inside the context.")
     start = time.perf_counter()
-    engine, tokenizer, weight_bytes = load_model(path, context)
+    if is_bonsai9(path):
+        from bonsai9 import ARCHIVE_SHA as archive_sha
+        from bonsai9_metal import load
+    else:
+        load, archive_sha = load_model, ARCHIVE_SHA
+    engine, tokenizer, weight_bytes = load(path, context)
     try:
         gc.collect()
         relief = getattr(C.CDLL(None), "malloc_zone_pressure_relief", None)
@@ -71,6 +76,6 @@ def chat(path, prompt, context, maximum):
                 "stop": "eos" if token in tokenizer.stop else "length",
                 "load_seconds": load_seconds, "generation_tps": len(output) / elapsed if output else None,
                 "weight_bytes_including_reserve": weight_bytes, "devices": engine.devices,
-                "archive_sha256": ARCHIVE_SHA}
+                "archive_sha256": archive_sha}
     finally:
         engine.close()

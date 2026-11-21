@@ -1,4 +1,4 @@
-"""Build the two C-ABI codec libraries from the included Rust sources."""
+"""Build the C-ABI codec libraries from the included Rust sources."""
 import hashlib
 import os
 from pathlib import Path
@@ -11,6 +11,7 @@ import tempfile
 SOURCE = Path(__file__).resolve().parent
 MODULES = {
     "trit-rans": ("trit_rans.rs", ("trit_encode", "trit_decode")),
+    "word-rans": ("word_rans.rs", ("word_decode",)),
     "load-kernels": ("load_kernels.rs", ("pack_native", "corrected_intervals", "row_intervals",
                      "block_intervals", "index_stream", "seek_row", "inverse_embedding")),
 }

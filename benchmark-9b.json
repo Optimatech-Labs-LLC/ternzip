@@ -1,0 +1,94 @@
+{
+  "model": "Ternary Bonsai 2 9B, PTQ1_0, text generation",
+  "source_revision": "82265ccc78ddaac4700286a35e9badcc32376dd9",
+  "source_file": "Ternary-Bonsai-2-9B-PTQ1_0.gguf",
+  "source_bytes": 1997486976,
+  "source_sha256": "3561df7ac7d26a71ffa991ac2db740b10841c3a350aa2676ccd3ff5d428b4e8b",
+  "archive_file": "ternzip-9b.trits",
+  "archive_bytes": 1860057576,
+  "archive_sha256": "a53379d2406c3be10498475e9722818986e534e3bef5cd4690b35ae74bdbd40f",
+  "tested": "2026-11-21",
+  "platform": "Apple M4 Pro",
+  "backend_release": "prism-b10828-a153697",
+  "context": 5120,
+  "decode": "greedy",
+  "timing_method": "One story and one coding run using fixed 4096-token prompts. The rate counts output tokens after prefill, ending at EOS or at 1024 generated tokens.",
+  "load_seconds_direct_replay": 14.067508666950744,
+  "load_seconds_cli_arithmetic": 15.618822291027755,
+  "benchmarks": {
+    "story": {
+      "input_tokens": 4096,
+      "output_tokens": 893,
+      "seconds": 18.420480542001314,
+      "decode_tps": 48.478648424172924,
+      "input_ids_sha256": "6b1289a101aa527fdca772709f293e350779bdd9b18b3f930789e1cab87720f0",
+      "output_ids_sha256": "90a98550d6b913f90f9c676126745495a874d6ec8f42445510951284b7f24e03",
+      "all_ids_and_stop_equal": true
+    },
+    "code": {
+      "input_tokens": 4096,
+      "output_tokens": 1024,
+      "seconds": 21.73327008401975,
+      "decode_tps": 47.116701538298955,
+      "input_ids_sha256": "79fc017812462b617739ec4f9b692163f0f2004f6ccf261347fc824ecd090b7f",
+      "output_ids_sha256": "9d5b66f01a19b08271958d6d3f0d4f1048c36edfc51910845258dc800abb5b0c",
+      "all_ids_and_stop_equal": true
+    }
+  },
+  "weights_including_hadamard_tables_cache_reserve_bytes": 1861761958,
+  "reference_comparison": {
+    "positions": 13371,
+    "publisher_and_release_tsv_sha256": "735cdd20d7dbcb356130bdd309409a4547d9eda431bf21dfff2aeba5111f47e2",
+    "loss_format": ".12g",
+    "fields": [
+      "group",
+      "document",
+      "position",
+      "target",
+      "top1",
+      "target_negative_log_likelihood"
+    ],
+    "groups": {
+      "733": {
+        "positions": 762,
+        "correct": 411,
+        "perplexity": 9.554022174331621
+      },
+      "extra1": {
+        "positions": 4203,
+        "correct": 1941,
+        "perplexity": 16.535664465157442
+      },
+      "extra2": {
+        "positions": 4180,
+        "correct": 1790,
+        "perplexity": 26.976202605577058
+      },
+      "fresh": {
+        "positions": 4226,
+        "correct": 1915,
+        "perplexity": 19.11432505384697
+      }
+    }
+  },
+  "score_input_sha256": "fd1453a0e74d7acfd749dc9e27a0517d7657f2872d3ac9b449b621f6d9a1e355",
+  "score_method": "Compared the serialized top-1 IDs and target-token losses rounded to 12 significant digits with a control run of the official GGUF using the same backend and native tokenizer.",
+  "whole_process_prior_equivalent_layout": {
+    "tested": "2026-11-20",
+    "unit": "bytes",
+    "after_story_physical_footprint": 2370669184,
+    "after_code_physical_footprint": 2370767488,
+    "peak_rss_including_startup": 5118050304
+  },
+  "runtime_prerequisites": "Versioned Apple Silicon Metal backend and dependencies ready for the timed loads.",
+  "cli_smoke_test": {
+    "prompt": "What is 17 × 6? Answer with the number only.",
+    "text": "102",
+    "output_ids": [
+      16,
+      15,
+      17
+    ],
+    "stop": "eos"
+  }
+}
