@@ -38,7 +38,7 @@ def main():
         raise RuntimeError("This release uses CPython 3.14 with compression.zstd.")
     from archive_io import ARCHIVE_NAME
     parser = argparse.ArgumentParser(prog="ternzip", description="Lossless ternary model archive tools.")
-    parser.add_argument("--version", action="version", version="ternzip v0.3.0")
+    parser.add_argument("--version", action="version", version="ternzip v0.3.1")
     actions = parser.add_subparsers(dest="command", required=True)
     restore_cmd = actions.add_parser("restore", help="Write and verify the exact official GGUF")
     restore_cmd.add_argument("archive", type=Path)
@@ -53,6 +53,7 @@ def main():
     chat_cmd.add_argument("prompt")
     chat_cmd.add_argument("--context", type=int, default=5120)
     chat_cmd.add_argument("--max-tokens", type=int, default=128)
+    chat_cmd.add_argument("--fast", action="store_true", help="Poll the Metal queue during 9B generation (uses about one CPU core)")
     args = parser.parse_args()
     cache = Path(os.environ.get("TERNZIP_CACHE", Path.home() / ".cache" / "ternzip")).expanduser().resolve()
     fast9 = False
@@ -61,6 +62,8 @@ def main():
         if is_bonsai9(args.archive):
             from versions9 import ARCHIVE_SIZE, archive_identity
             fast9 = archive_identity(args.archive)[0] == ARCHIVE_SIZE
+    if args.command == "chat" and args.fast and not fast9:
+        parser.error("--fast requires the 1.834 GB 9B archive")
     if not dependencies_ready():
         env = cache / "python-3.14-v1"
         python = env / "bin/python"
@@ -88,7 +91,7 @@ def main():
         report = encode(args.gguf, args.output)
     else:
         from chat_model import chat
-        report = chat(args.archive, args.prompt, args.context, args.max_tokens)
+        report = chat(args.archive, args.prompt, args.context, args.max_tokens, fast=args.fast)
     import json
     print(json.dumps(report, indent=2, ensure_ascii=False))
 

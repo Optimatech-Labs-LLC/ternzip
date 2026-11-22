@@ -2,6 +2,7 @@
 from bisect import bisect_right
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack, contextmanager
 import ctypes as C
 import math
 import os
@@ -9,7 +10,7 @@ import struct
 
 import numpy as np
 
-from archive_io import checked_input
+from archive_io import checked_file
 from bonsai9 import NineArchive
 from versions9 import ARCHIVE_SIZE, archive_identity
 from gguf_tools import metadata_array
@@ -38,9 +39,10 @@ class InputRows:
         self.normalization = 1 / math.sqrt(self.width)
         index = archive.by_name[name]
         start, end = archive.physical[index:index + 2]
-        if archive.storage[start] != 1:
+        encoded = archive.page_directory(index)
+        if encoded[0] != 1:
             raise ValueError("Expected an entropy-coded embedding")
-        record = memoryview(archive.storage)[start + 1:end]
+        record = encoded[1:]
         mode, length, count = HEADER.unpack_from(record)
         meta = record[HEADER.size:HEADER.size + length]
         groups = self.rows * self.width // 128
@@ -77,15 +79,16 @@ class InputRows:
 
         def scan(item):
             page, scope = item
-            payload = np.frombuffer(archive.storage, np.uint8, int(lengths[page]), int(self.edges[page]))
+            begin, end = map(int, self.edges[page:page + 2])
+            payload = np.frombuffer(archive.span(index, begin - start, end - start), np.uint8)
             keys = self.keys(scope)
             states = self.checks[scope.start + page:scope.stop + page + 1]
             if native().index_stream(payload.ctypes.data, payload.size, keys.ctypes.data, len(keys),
                                      self.width, self.base.ctypes.data, len(self.base), states.ctypes.data):
                 raise ValueError("Could not index embedding restart states")
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            for _ in pool.map(scan, enumerate(pages), buffersize=4):
+        with archive.page_pool(4) as pool:
+            for _ in pool.map(scan, enumerate(pages), buffersize=archive.page_workers):
                 pass
         self.hot = OrderedDict()
         self.hot_rows = np.empty((cache_rows, self.width), np.float16)
@@ -167,8 +170,7 @@ def tied_header(gguf):
 
 class PagedStream:
     """Expose the original PTQ1_0 compute matrices to the pinned Metal backend."""
-    open_c_file = PackedStream.open_c_file
-    read_into = PackedStream.read_into
+    repeated = frozenset(("ssm_alpha.weight", "ssm_norm.weight", "ssm_out.weight"))
 
     def __init__(self, archive, fast):
         self.archive = archive
@@ -202,6 +204,24 @@ class PagedStream:
         self.length = self.edges[-1]
         self.position = 0
         self.index = self.array = None
+        self.layer = None
+        self.pending = {}
+
+    @contextmanager
+    def open_c_file(self):
+        try:
+            with PackedStream.open_c_file(self) as stream:
+                yield stream
+        finally:
+            self.index = self.array = None
+            self.pending.clear()
+            self.archive.cache.clear()
+
+    def read_into(self, pointer, requested):
+        count = PackedStream.read_into(self, pointer, requested)
+        if self.index is not None and self.position == self.edges[self.index + 1]:
+            self.index = self.array = None
+        return count
 
     def buffer_at(self, pos):
         if not 0 <= pos < self.length:
@@ -210,26 +230,57 @@ class PagedStream:
             return self.header, pos
         index = bisect_right(self.edges, pos) - 1
         if index != self.index:
+            self.index = self.array = None
             tensor_index = self.indices[index]
-            self.array = self.archive.record(tensor_index, self.strides.get(tensor_index, 28))
+            name = self.archive.names[tensor_index]
+            layer, _, family = name.removeprefix("blk.").partition(".")
+            if layer != self.layer:
+                self.pending.clear()
+                self.layer = layer
+            self.array = self.pending.pop(tensor_index, None)
+            if self.array is None:
+                self.array = self.archive.record(tensor_index, self.strides.get(tensor_index, 28))
+                if family in self.repeated and name not in self.archive.sources and name not in self.archive.parents:
+                    self.pending[tensor_index] = self.array
             if self.array.nbytes != self.edges[index + 1] - self.edges[index]:
                 raise ValueError("Incorrect native tensor extent")
             self.index = index
         return self.array, pos - self.edges[index]
 
 
-def hadamard_bytes(gguf, llama, fast):
-    """Ask the active Metal allocator for each rotation/sign buffer, including alignment."""
+class DirectStream(PagedStream):
+    """Expose only GGUF metadata through stdio. The native loader owns the weight destinations."""
+    def __init__(self, archive, fast, observe):
+        super().__init__(archive, fast)
+        self.observe = observe
+
+    def read_into(self, pointer, requested):
+        count = max(0, min(requested, len(self.header) - self.position))
+        if count:
+            C.memmove(pointer, self.header.ctypes.data + self.position, count)
+            self.position += count
+        return count
+
+    def load_native(self, llama, stream, settings):
+        from direct_weights9 import load_direct
+        return load_direct(self, llama, stream, settings)
+
+def active_metal_device():
     lib = C.CDLL(str(backend_directory() / "libggml.0.dylib"))
+    bind(lib, "ggml_backend_load_all", None)()
+    device = bind(lib, "ggml_backend_dev_by_name", C.c_void_p, C.c_char_p)(b"MTL0")
+    if not device:
+        raise RuntimeError("Apple Metal is unavailable to this process")
+    return lib, device
+
+
+def hadamard_bytes(gguf, llama, fast, lib, device):
+    """Ask the active Metal allocator for each rotation/sign buffer, including alignment."""
     ptr, size = C.c_void_p, C.c_size_t
 
     class Init(C.Structure):
         _fields_ = [("mem_size", size), ("mem_buffer", ptr), ("no_alloc", C.c_bool)]
 
-    bind(lib, "ggml_backend_load_all", None)()
-    device = bind(lib, "ggml_backend_dev_by_name", ptr, C.c_char_p)(b"MTL0")
-    if not device:
-        raise RuntimeError("Apple Metal is unavailable to this process")
     buffer_type = bind(lib, "ggml_backend_dev_buffer_type", ptr, ptr)(device)
     overhead = bind(lib, "ggml_tensor_overhead", size)()
     initialize = bind(lib, "ggml_init", ptr, Init)
@@ -261,7 +312,7 @@ def hadamard_bytes(gguf, llama, fast):
     return total, (1, len(widths)), (block * block, rotation_bytes)
 
 
-def load(path, context, *, max_outputs=1):
+def load(path, context, *, max_outputs=1, observe=None, page_workers=None):
     from chat_model import DECODER_RESERVE, WEIGHT_BUDGET
     size, sha = archive_identity(path)
     fast = size == ARCHIVE_SIZE
@@ -269,15 +320,26 @@ def load(path, context, *, max_outputs=1):
     llama = C.CDLL(str(backend_directory() / "libllama.0.dylib"))
     if fast:
         if not hasattr(llama, "ternzip9_reuse_config"):
-            raise ValueError("This 9B archive requires the Ternzip v0.3.0 Metal backend.")
+            raise ValueError("This 9B archive requires the Ternzip Metal backend with compact rotation support.")
         bind(llama, "ternzip9_reuse_config", None, C.c_uint)(8)
-    with checked_input(path, size, sha) as (file, data):
-        archive = NineArchive(data)
-        rotation_bytes, counts, rotation = hadamard_bytes(archive.g, llama, fast)
+    with checked_file(path, size, sha) as file, ExitStack() as resources:
+        ggml, device = active_metal_device()
+        if page_workers is None:
+            name = bind(ggml, "ggml_backend_dev_description", C.c_char_p, C.c_void_p)(device)
+            direct = fast and hasattr(llama, "ternzip9_load_with_writer")
+            page_workers = 14 if direct and name == b"Apple M4 Pro" else 10
+        pool = resources.enter_context(ThreadPoolExecutor(max_workers=page_workers))
+        archive = NineArchive.from_file(file, pool)
+        archive.page_workers = page_workers
+        rotation_bytes, counts, rotation = hadamard_bytes(archive.g, llama, fast, ggml, device)
         table = InputRows(archive, file)
         try:
-            engine = NativeEngine(PagedStream(archive, fast), context, max_outputs=max_outputs, prefill_chunk=256,
+            image = (DirectStream(archive, fast, observe) if fast and hasattr(llama, "ternzip9_load_with_writer")
+                     else PagedStream(archive, fast))
+            engine = NativeEngine(image, context, max_outputs=max_outputs, prefill_chunk=256,
                                   backend_greedy=max_outputs == 1, input_table=table, text_position_axes=4)
+            engine.used_direct_writer = isinstance(image, DirectStream)
+            engine.page_workers = page_workers
         except BaseException:
             table.close()
             raise

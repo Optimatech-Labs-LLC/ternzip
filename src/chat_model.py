@@ -43,7 +43,7 @@ def load_model(path, context):
     return engine, tokenizer, weight_bytes
 
 
-def chat(path, prompt, context, maximum):
+def chat(path, prompt, context, maximum, *, fast=False):
     if not 1 <= maximum < context:
         raise ValueError("The output limit must be positive and fit inside the context.")
     start = time.perf_counter()
@@ -55,6 +55,10 @@ def chat(path, prompt, context, maximum):
         load, archive_sha = load_model, ARCHIVE_SHA
     engine, tokenizer, weight_bytes = load(path, context)
     try:
+        if fast:
+            from metal_wait import enable_fast_wait
+            from native_paths import backend_directory
+            enable_fast_wait(engine, backend_directory())
         gc.collect()
         relief = getattr(C.CDLL(None), "malloc_zone_pressure_relief", None)
         if relief is not None:
@@ -77,6 +81,6 @@ def chat(path, prompt, context, maximum):
                 "stop": "eos" if token in tokenizer.stop else "length",
                 "load_seconds": load_seconds, "generation_tps": len(output) / elapsed if output else None,
                 "weight_bytes_including_reserve": weight_bytes, "devices": engine.devices,
-                "archive_sha256": archive_sha}
+                "wait_mode": "fast" if fast else "ordinary", "archive_sha256": archive_sha}
     finally:
         engine.close()

@@ -144,6 +144,7 @@ class NativeEngine:
         self.model = self.ctx = None
         self.sampler = self.sampled_token = None
         self.input_table = input_table
+        self.wait_for_generation = None
         if text_position_axes not in (1,4):
             raise ValueError("Unsupported text position layout")
         self.text_position_axes=text_position_axes
@@ -214,7 +215,8 @@ class NativeEngine:
         load = bind(self.llama, "llama_model_load_from_file_ptr", P, P, ModelParams)
         if hasattr(image, "open_c_file"):
             with image.open_c_file() as stream:
-                self.model = load(stream, settings)
+                self.model = (image.load_native(self.llama, stream, settings) if hasattr(image, "load_native")
+                              else load(stream, settings))
         else:
             lib_c = C.CDLL(None)
             stream = bind(lib_c, "fmemopen", P, P, C.c_size_t, C.c_char_p)(
@@ -371,6 +373,8 @@ class NativeEngine:
                 raise RuntimeError("Native model forward pass failed")
             self.position += 1
             if self.sampler:
+                if self.wait_for_generation is not None:
+                    self.wait_for_generation()
                 return self.backend_token()
             logits = np.ctypeslib.as_array(self.last_logits(self.ctx, -1), shape=(self.vocab_size,))
             return int(np.argmax(logits))

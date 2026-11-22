@@ -17,7 +17,7 @@ def archive_identity(path):
     size = Path(path).stat().st_size
     if size not in ARCHIVES:
         raise ValueError(
-            "Unsupported 9B archive version or incomplete download. This loader is v0.3.0 "
+            "Unsupported 9B archive version or incomplete download. This loader is v0.3.1 "
             "and supports the v0.2.0 and v0.3.0 archives. Check SHA256SUMS and use the "
             "loader tag linked by the archive's model card."
         )

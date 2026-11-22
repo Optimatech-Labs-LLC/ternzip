@@ -79,6 +79,7 @@ class PackedStream:
             if size <= 0:
                 raise ValueError("Empty virtual page")
             C.memmove(pointer + read, array.ctypes.data + offset, size)
+            del array
             read += size
             self.position += size
         return read

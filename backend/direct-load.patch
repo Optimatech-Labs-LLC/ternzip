@@ -1,0 +1,66 @@
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -1440,6 +1440,22 @@
+     }
+ }
+ 
++// Synchronous archive loader. The normal GGUF parser still chooses every tensor's type, shape and allocation.
++using ternzip_writer = int (*)(void *, const char *, void *, size_t, int, const char *, ggml_tensor *);
++struct ternzip_load_scope {
++    ternzip_writer write;
++    void * user;
++};
++static thread_local ternzip_load_scope direct_writer = {};
++
++extern "C" LLAMA_API llama_model * ternzip9_load_with_writer(FILE * file, llama_model_params params,
++        ternzip_writer write, void * user) {
++    if (!file || !write || direct_writer.write) return nullptr;
++    struct reset_writer { ~reset_writer() { direct_writer = {}; } } reset;
++    direct_writer = {write, user};
++    return llama_model_load_from_file_ptr(file, params);
++}
++
+ bool llama_model_loader::load_all_data(
+         struct ggml_context * ctx,
+         llama_buf_map & bufs,
+@@ -1475,7 +1491,7 @@
+     std::vector<void *> host_ptrs;
+     size_t buffer_idx = 0; // buffer to use for async loads
+     ggml_backend_t upload_backend = [&](const char * func) -> ggml_backend_t {
+-        if (use_mmap || check_tensors) {
++        if (direct_writer.write || use_mmap || check_tensors) {
+             return nullptr;
+         }
+         // When not using mmaped io use async uploads from pinned memory to GPU memory.
+@@ -1570,7 +1586,30 @@
+ 
+         size_t n_size = ggml_nbytes(cur);
+ 
+-        if (use_mmap) {
++        if (direct_writer.write) {
++            if (use_mmap || check_tensors || !cur->buffer || !cur->data) {
++                throw std::runtime_error("Ternzip requires allocated tensors in the synchronous loader");
++            }
++            auto * buft = ggml_backend_buffer_get_type(cur->buffer);
++            auto * dev = ggml_backend_buft_get_device(buft);
++            const char * name = ggml_backend_buft_name(buft);
++            // Only the pinned Metal shared buffer has this name and exposes a writable CPU address.
++            bool shared_metal = dev && std::strcmp(name, "MTL0") == 0 &&
++                dev == ggml_backend_dev_by_name("MTL0") && buft == ggml_backend_dev_buffer_type(dev);
++            if (!shared_metal && !ggml_backend_buffer_is_host(cur->buffer)) {
++                throw std::runtime_error(format("Ternzip cannot write buffer '%s' directly", name));
++            }
++            const uintptr_t base = (uintptr_t)ggml_backend_buffer_get_base(cur->buffer);
++            const uintptr_t address = (uintptr_t)cur->data;
++            const size_t capacity = ggml_backend_buffer_get_size(cur->buffer);
++            if (!base || address < base || n_size > capacity || address - base > capacity - n_size) {
++                throw std::runtime_error("Ternzip destination outside its allocation");
++            }
++            if (!direct_writer.write(direct_writer.user, ggml_get_name(cur), cur->data, n_size,
++                                     (int)cur->type, name, cur)) {
++                throw std::runtime_error(format("Ternzip failed to fill '%s'", ggml_get_name(cur)));
++            }
++        } else if (use_mmap) {
+             const auto & mapping = mappings.at(weight->idx);
+             ggml_backend_buffer_t buf_mmap = nullptr;
+             if (bufs.count(weight->idx)) {

@@ -26,10 +26,18 @@ def checked_input(path, size, expected):
             yield src, data
 
 
-def verify_file(path, size, expected):
+@contextmanager
+def checked_file(path, size, expected):
+    """Hash the open descriptor without mapping the whole archive into the process."""
     with Path(path).open("rb") as src:
         if os.fstat(src.fileno()).st_size != size or hashlib.file_digest(src, "sha256").hexdigest() != expected:
             raise ValueError(f"Size or SHA-256 mismatch for {path}")
+        yield src
+
+
+def verify_file(path, size, expected):
+    with checked_file(path, size, expected):
+        pass
 
 
 @contextmanager

@@ -1,8 +1,7 @@
 {
-  "tag": "ternzip-metal-macos-arm64-v0.3.0",
-  "bundle": "ternzip-metal-macos-arm64-v0.3.0",
-  "url": "https://github.com/Optimatech-Labs-LLC/ternzip/releases/download/v0.3.0/ternzip-metal-macos-arm64-v0.3.0.tar.gz",
-  "tarball_sha256": "d08f786ab98d5830daa646f7ef4d80012cf24b89ba11a98276cf8c012f7ce0b9",
+  "tag": "ternzip-metal-macos-arm64-v0.3.1",
+  "bundle": "ternzip-metal-macos-arm64-v0.3.1",
+  "tarball_sha256": "82609669e174ef43092c256f16f0fdf2f7f3d30c8b38bebaf883ca5dd49a29b1",
   "files": {
     "LICENSE": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d",
     "libggml-base.0.dylib": "52043e054006f041d0bd8e1da8e4e3db3b8be7796451cd57b3c60248c9b2cd6c",
@@ -11,6 +10,8 @@
     "libggml-metal.0.dylib": "0f5812666ce7b653f63f064a4bd943df59c8cee7ab6723c8e1d7845e41bf59ef",
     "libggml-rpc.0.dylib": "6bd0c1e9251f2c56402d6f6b689de3cee93e655e0bb17eb9dc36e3e42e685b6c",
     "libggml.0.dylib": "aa84e1ce5256bf9bce26151455f25265ed50144db501e9c805bf0ce827d54319",
-    "libllama.0.dylib": "1ea95266906fc12ca4aad7fcbcbb05ddc75fbcf4a486c1089fb17ada7c1d2808"
-  }
+    "libllama.0.dylib": "8787dee3f4a675e16a8de7c6124b756b60b26854e892af5ebe6df00501334385",
+    "libternzip-wait.dylib": "72a77ecd6a5c340616bcc85aec384d575492a9b581a0920371ed95f550837811"
+  },
+  "url": "https://github.com/Optimatech-Labs-LLC/ternzip/releases/download/v0.3.1/ternzip-metal-macos-arm64-v0.3.1.tar.gz"
 }

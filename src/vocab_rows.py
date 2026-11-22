@@ -134,7 +134,10 @@ def scale_lut(bits):
 
 def keys(ids, row_labels, col_labels, bits, lut):
     groups = row_labels[ids, None].astype(np.uint16) * 4 + lut[bits[ids] & 32767]
-    return (np.repeat(groups, 128, axis=1) << 4) + col_labels
+    # Broadcast one group offset across its 128 columns while writing the final key array.
+    keys = np.empty((*groups.shape, 128), np.uint16)
+    np.add((groups << 4)[:, :, None], col_labels.reshape(1, -1, 128), out=keys)
+    return keys.reshape(len(groups), len(col_labels))
 
 
 def context(base, relation, parent_trits):

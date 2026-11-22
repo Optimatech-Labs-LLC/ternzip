@@ -50,6 +50,11 @@ class Predictor:
                 ids, flips = layer.next_rows(rows, width, ids, flips)
 
     def field(self, part, keys):
+        if self.mapping is not None:
+            reference = self.previous[self.mapping[part]]
+            signed = np.where(self.flips[part, None], 2 - reference, reference)
+            if self.row_lookup is not None and not self.stages:
+                return self.row_lookup[signed, keys]
         if self.axes is None:
             site = self.bounds[keys]
         else:
@@ -57,8 +62,6 @@ class Predictor:
             site = corrected_intervals(keys, self.bounds, lut, row_fix[part], col_fix)
         field = site
         if self.mapping is not None:
-            reference = self.previous[self.mapping[part]]
-            signed = np.where(self.flips[part, None], 2 - reference, reference)
             field = (self.row_lookup[signed, keys] if self.row_lookup is not None
                      else row_intervals(signed, site, self.row_odds))
         for layer, ids, flips in self.stages:

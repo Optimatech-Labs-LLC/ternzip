@@ -1,5 +1,4 @@
 """Decode count-conditioned ternary pages into the original scale-and-weight blocks."""
-from concurrent.futures import ThreadPoolExecutor
 import ctypes as C
 from functools import lru_cache
 import struct
@@ -60,18 +59,17 @@ def decode_page(page, sites, model):
 
 
 class Matrix:
-    def __init__(self, stream, i):
+    def __init__(self, stream, i, storage, record_size=None):
         self.name = stream.names[i]
         (self.width, self.rows), kind, _ = stream.g.tensors[self.name]
-        self.start, end = stream.physical[i:i+2]
+        end = len(storage) if record_size is None else record_size
         self.groups_per_row = self.width // 128
         groups = self.groups_per_row * self.rows
         self.pad = stream.logical[i+1] - stream.logical[i] - groups * 28
         if kind != 143 or self.width % 128 or not 0 <= self.pad < stream.g.alignment:
             raise ValueError("Unexpected native weight extent")
-        storage = stream.storage
-        mode, frame_size, page_count = WH.unpack_from(storage, self.start+1)
-        frame_at = self.start+1+WH.size
+        mode, frame_size, page_count = WH.unpack_from(storage, 1)
+        frame_at = 1 + WH.size
         transformed, codec, option_bytes = CONFIG.unpack_from(storage, frame_at)
         if mode != 128 or (codec, option_bytes) != (0,0) or transformed not in (0,1):
             raise ValueError("Expected independent ternary sites")
@@ -97,7 +95,7 @@ class Matrix:
         self.edges = [first, *(first + lengths.cumsum(dtype=np.int64)).tolist()]
         if self.edges[-1] + self.pad != end:
             raise ValueError("Pages exceed tensor record")
-        self.tail = storage[end-self.pad:end]
+        self.tail = storage[end-self.pad:end] if record_size is None else None
 
     def sites(self, part):
         return keys(part, self.row, self.col, self.bits, self.lut)
@@ -107,22 +105,29 @@ class Matrix:
 
 
 
-def record(archive, index, stride):
-    matrix = Matrix(archive, index)
-    dest = np.empty((matrix.rows * matrix.groups_per_row, stride), np.uint8)
-    retained = np.empty((matrix.rows, matrix.width), np.uint8) if matrix.name in archive.sources else None
+def record(archive, index, stride, data, *, destination=None, read_page=None, record_size=None):
+    matrix = Matrix(archive, index, data, record_size)
+    # lru_cache can execute a first call on multiple threads. Build the shared table once.
+    grid()
+    shape = (matrix.rows * matrix.groups_per_row, stride)
+    dest = np.empty(shape, np.uint8) if destination is None else destination.reshape(shape)
+    retained = (np.empty((matrix.rows, matrix.width), np.uint8)
+                if destination is None and matrix.name in archive.sources else None)
 
     def decode(item):
         page_index, rows = item
-        page = memoryview(archive.storage)[matrix.edges[page_index]:matrix.edges[page_index + 1]]
+        start, end = matrix.edges[page_index:page_index + 2]
+        page = data[start:end] if read_page is None else read_page(start, end)
         trits = decode_page(page, matrix.sites(rows), matrix.model)
         pack_native(trits, matrix.bits[rows], stride, dest[matrix.blocks(rows)])
         if retained is not None:
             retained[rows] = trits
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        for _ in pool.map(decode, enumerate(matrix.pages), buffersize=8):
+    with archive.page_pool(8) as pool:
+        for _ in pool.map(decode, enumerate(matrix.pages), buffersize=archive.page_workers):
             pass
     if retained is not None:
         archive.cache[matrix.name] = retained
-    return np.concatenate((dest.ravel(), np.frombuffer(matrix.tail, np.uint8))) if matrix.pad else dest.ravel()
+    if matrix.pad and destination is None:
+        return np.concatenate((dest.ravel(), np.frombuffer(matrix.tail, np.uint8)))
+    return dest.ravel()

@@ -134,7 +134,8 @@ def intervals(hist):
     return np.column_stack((z, UNIT - p)).astype("<u2")
 
 def decode_tensor(record, rows, width, reference, keep_transpose, pool, native_stride=None,
-                  *, previous_rows=None, capture_rows=None):
+                  *, previous_rows=None, capture_rows=None, parallel_pages=4,
+                  destination=None, read_page=None, record_size=None):
     mode, meta_size, npages = HEADER.unpack_from(record)
     extended=128<=mode<=131
     if extended:
@@ -183,7 +184,7 @@ def decode_tensor(record, rows, width, reference, keep_transpose, pool, native_s
     prediction = Predictor(codec, option_data, rows, width, previous_rows, bounds)
     lengths = np.frombuffer(record, dtype="<u4", count=npages, offset=at)
     edges = [data_start, *(data_start + lengths.cumsum(dtype=np.int64)).tolist()]
-    if edges[-1] != len(record):
+    if edges[-1] != (len(record) if record_size is None else record_size):
         raise ValueError("Ternary page lengths do not cover the record")
     scales = scale_classes((palette, ranks, low, overflow), rows)
     if native_stride is None:
@@ -193,13 +194,14 @@ def decode_tensor(record, rows, width, reference, keep_transpose, pool, native_s
         from load_kernels import pack_native
         from vocab_rows import scale_bits
         bits = scale_bits((palette,ranks,low,overflow),rows)
-        native_data = np.empty((groups,native_stride),np.uint8)
+        native_data = (np.empty((groups, native_stride), np.uint8) if destination is None
+                       else destination.reshape(groups, native_stride))
     transpose = np.empty((width, rows), np.uint8) if keep_transpose else None
 
     def decode(item):
         i, part = item
         keys = context_keys(part, col, row, scales, reference, mode)
-        payload=record[edges[i]:edges[i+1]]
+        payload = record[edges[i]:edges[i+1]] if read_page is None else read_page(edges[i], edges[i+1])
         if prediction.active:
             from residual_words import unpack_field
             trits = unpack_field(payload, prediction.field(part, keys), prediction.word_factors)
@@ -218,7 +220,7 @@ def decode_tensor(record, rows, width, reference, keep_transpose, pool, native_s
                                   POWERS, dtype=np.uint16)
         tails[target] += (flat[:, 125:].astype(np.uint16) @ POWERS[:3]).astype(np.uint8)
 
-    for _ in pool.map(decode, enumerate(pages), buffersize=4):
+    for _ in pool.map(decode, enumerate(pages), buffersize=parallel_pages):
         pass
     if native_stride is not None:
         return native_data,transpose
