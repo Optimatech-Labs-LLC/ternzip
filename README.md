@@ -26,7 +26,9 @@ If an older loader prints `Expected 1,860,057,576`, it recognizes the v0.2.0 arc
 
 ## Run Ternary Bonsai 2 9B on a Mac
 
-Direct inference from the archive requires the **Ternzip custom loader** on Apple Silicon. For this archive the launcher fetches the version-matched arm64 Metal backend once (2,552,087 bytes) and verifies its SHA-256. The archive plus loader restores without an external model checkpoint. Prism provides the optional vision projector and speculative decoding files separately. [Ternzip v0.3.0](https://github.com/Optimatech-Labs-LLC/ternzip/tree/v0.3.0) · [Prism’s packing guide](https://huggingface.co/prism-ml/Ternary-Bonsai-2-9B-gguf#choosing-a-packing)
+Direct chat uses the custom loader on Apple Silicon. We tested a 48 GB M4 Pro and recommend 16 GB or more of unified memory for chat. An 8 GB Mac remains untested. The source launcher downloads the 2,552,087-byte Metal backend on first chat and verifies its SHA-256. The optional 29.65 MB Mac CLI preview includes that backend and works offline after download. [Mac preview and opening instructions](https://huggingface.co/optimatechlabs/ternzip-9b#optional-prebuilt-mac-cli-preview) · [Rebuild the Metal backend](backend/README.md#rebuild-on-apple-silicon)
+
+The archive and loader can restore the model without an external checkpoint. Prism publishes the optional vision projector and speculative decoding files separately. [Prism’s packing guide](https://huggingface.co/prism-ml/Ternary-Bonsai-2-9B-gguf#choosing-a-packing)
 
 ```sh
 ./ternzip chat /path/to/ternzip-9b.trits 'What is 17 × 6? Answer with the number only.'
