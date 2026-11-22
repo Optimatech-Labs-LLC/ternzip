@@ -4,35 +4,48 @@ Ternzip compresses Prism ML’s ternary language models. One command restores th
 
 | Prism checkpoint | Original GGUF | Ternzip download | Bytes saved |
 | --- | ---: | ---: | ---: |
-| Ternary Bonsai 2 9B · PTQ1_0 | 1,997,486,976 | 1,860,057,576 | 137,429,400 (6.88%) |
+| Ternary Bonsai 2 9B · PTQ1_0 | 1,997,486,976 | 1,834,157,871 | 163,329,105 (8.18%) |
 | Ternary Bonsai 8B · Q2_0 | 2,182,184,672 | 1,623,736,952 | 558,447,720 (25.59%) |
 
-The 9B source already packs five ternary values per byte across most of each weight block. Its 6.88% saving is measured against that dense file. Each row uses its own official source as the baseline. [9B archive](https://huggingface.co/optimatechlabs/ternzip-9b) · [8B archive](https://huggingface.co/optimatechlabs/ternzip-8b)
+The 9B download saving uses Prism’s dense PTQ1_0 as its baseline. The same Ternzip archive saves 24.11% against Prism’s PQ2_0 file and 28.26% against its Q2_0 file. Prism’s fork executes all three packings of the same ternary weights. Prism recommends PQ2_0 by default on Apple Silicon. Q2_0 also runs in upstream llama.cpp b11556 and later. [Prism’s packing guide](https://huggingface.co/prism-ml/Ternary-Bonsai-2-9B-gguf#choosing-a-packing) · [9B archive](https://huggingface.co/optimatechlabs/ternzip-9b) · [8B archive](https://huggingface.co/optimatechlabs/ternzip-8b)
 
-## Restore or run Ternary Bonsai 2 9B
+## Restore Ternary Bonsai 2 9B
 
-Download `ternzip-9b.trits`. With CPython 3.14 and stable Rust installed, run this from the Ternzip source directory. It writes `Ternary-Bonsai-2-9B-PTQ1_0.gguf` in the current directory. Set aside 2.00 GB for the output. The launcher caches its Python dependencies and builds the small native codecs. [9B download](https://huggingface.co/optimatechlabs/ternzip-9b/resolve/main/ternzip-9b.trits)
+Download the 9B archive and the **v0.3.0 loader**. From the loader directory, with CPython 3.14 and stable Rust installed, run the following command. It writes `Ternary-Bonsai-2-9B-PTQ1_0.gguf` to the current directory and checks all 1,997,486,976 bytes against Prism’s SHA-256. Allow 2.00 GB for the output. To verify without writing a GGUF, use `./ternzip verify /path/to/ternzip-9b.trits`. [Versioned loader](https://github.com/Optimatech-Labs-LLC/ternzip/tree/v0.3.0) · [Prism’s SHA-256 manifest](https://huggingface.co/prism-ml/Ternary-Bonsai-2-9B-gguf/blob/82265ccc78ddaac4700286a35e9badcc32376dd9/SHA256SUMS)
 
 ```sh
 ./ternzip restore /path/to/ternzip-9b.trits
 ```
 
-The command checks the input archive, hashes the written GGUF and compares it with Prism’s published SHA-256 before making the output available. It preserves an existing output file. To choose a different location, supply a second path. To check the restore without writing a GGUF, run `./ternzip verify /path/to/ternzip-9b.trits`. [Prism’s published checksums](https://huggingface.co/prism-ml/Ternary-Bonsai-2-9B-gguf/blob/82265ccc78ddaac4700286a35e9badcc32376dd9/SHA256SUMS)
-
-| 9B file | SHA-256 |
+| File | SHA-256 |
 | --- | --- |
-| Ternzip archive | `a53379d2406c3be10498475e9722818986e534e3bef5cd4690b35ae74bdbd40f` |
+| Ternzip archive | `47f52b0d8e0ec4d38f61d61e7100ec3b17fec6dbe2fe58a7904fa4a57c07a66b` |
 | Restored PTQ1_0 GGUF | `3561df7ac7d26a71ffa991ac2db740b10841c3a350aa2676ccd3ff5d428b4e8b` |
 
-For direct text generation on Apple Silicon, the custom loader uses a checksum-pinned Prism Metal runtime. It reads input embeddings on demand and keeps the compute matrices in their original PTQ1_0 layout. You can also run the restored GGUF with Prism’s llama.cpp fork. The optional vision projector and speculative decoding files are separate downloads from Prism. The released encoder profile covers the 8B model. [Prism’s runtime and file guide](https://huggingface.co/prism-ml/Ternary-Bonsai-2-9B-gguf/blob/82265ccc78ddaac4700286a35e9badcc32376dd9/README.md)
+If an older loader prints `Expected 1,860,057,576`, it recognizes the v0.2.0 archive. Use the v0.3.0 source for this download. The matching launcher prints `ternzip v0.3.0` for `./ternzip --version`.
+
+## Run Ternary Bonsai 2 9B on a Mac
+
+Direct inference from the archive requires the **Ternzip custom loader** on Apple Silicon. For this archive the launcher fetches the version-matched arm64 Metal backend once (2,552,087 bytes) and verifies its SHA-256. The archive plus loader restores without an external model checkpoint. Prism provides the optional vision projector and speculative decoding files separately. [Ternzip v0.3.0](https://github.com/Optimatech-Labs-LLC/ternzip/tree/v0.3.0) · [Prism’s packing guide](https://huggingface.co/prism-ml/Ternary-Bonsai-2-9B-gguf#choosing-a-packing)
 
 ```sh
 ./ternzip chat /path/to/ternzip-9b.trits 'What is 17 × 6? Answer with the number only.'
 ```
 
-The 9B archive stores all 427 original tensors. The coder uses row, column and scale information to estimate how often each weight value occurs. For 12 matrices it also uses signed row matches in earlier layers. These predictions change how many bits each value costs. The decoder recovers every stored value, including the values the predictor got wrong. [9B decoder](src/bonsai9.py) · [9B loader](src/bonsai9_metal.py)
+For the 9B archive, the coder uses each weight’s row, column and block scale to predict the frequencies of −1, 0 and +1. Selected matrices also use zero counts within blocks or signed row matches across layers. The scale encoder predicts original 16-bit scale words, then stores enough information to recover each bit. At load time the custom Metal runtime builds a mix of dense trits and two-bit slots, keeps input embedding rows file-backed and uses a lossless packed rotation. It runs the four-tap convolution across channels during ordinary single-token decoding.
 
-On an Apple M4 Pro, the 9B loader generated **48.48 tokens/s** on a story and **47.12 tokens/s** on code after processing 4,096 input tokens. Both generated sequences and stopping tokens matched Prism’s control. The top choice and reported target-token loss matched at all **13,371** scored positions. Counted weights, embedding tables, row cache and decoder reserve totaled **1,861,761,958 bytes**. An earlier run of this layout measured about **2.37 GB** for the whole process after generation. [9B benchmark measurements](benchmark-9b.json)
+The custom Metal runtime measured **60.12 tokens/s** and matched the Q2_0 control on **24/24** complete token streams and next or stopping decisions. On this workload its median rate was 9.0% above Prism’s default PQ2_0 and 9.1% above Prism Q2_0. The model uses the same ternary values. Its faster token generation comes from the execution layout and Metal kernels. File compression reduces the download and adds unpacking work at startup. A separate three-start check through the packaged loader matched all 24 streams and measured 59.94 tokens/s. Taken together, the measurements support about 60 tokens/s.
+
+| Configuration | Download (bytes) | Median output tokens/s | Median warm load | Counted weight bytes | Matches vs. Q2_0 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Prism PTQ1_0 | 1,997,486,976 | 50.42 | 1.29 s | 2,053,638,719 | 24/24 |
+| Prism PQ2_0 (Mac default) | 2,416,851,840 | 55.16 | 1.52 s | 2,473,006,204 | 24/24 |
+| Prism Q2_0 | 2,556,640,128 | 55.09 | 1.53 s | 2,612,781,385 | reference |
+| Ternzip v0.3.0 | 1,834,157,871 | 60.12 | 17.85 s | 1,999,911,846 | 24/24 |
+
+One Apple M4 Pro, one greedy text stream, eight English prompts repeated across three fresh processes per configuration, up to 256 output tokens per chat. Thinking and speculation were disabled. Median output rate includes streamed detokenization and the next token or stop decision. Startup and prompt processing were timed separately. All files were on the same drive and were read once immediately before each timed load to warm the filesystem cache. Each startup median covers three starts with dependencies installed. The weight figures exclude context and other process memory. [Benchmark data](benchmark-9b.json) · [Metal source changes](backend)
+
+The earlier three-start comparison measured 59.33 against 53.09 tokens/s for Q2_0 (11.75% higher). Median loads there were 21.00 s and 18.61 s, respectively, using different storage paths without the matched cache warm-up. The earlier 17.81 s observation was a single Ternzip start. Across prior sessions Ternzip’s 1.836 GB archive moved from 59.04 to 58.04 tokens/s and Prism Q2_0 from 52.16 to 53.09. Roughly 1 token/s of variation makes the old and new archive timings insufficient to rank those archives. Their execution weights and Metal runtime agree.
 
 Created using Bonsai by Prism ML. Optimatech Labs modified the distribution by recompressing the official GGUF and adding a loader. This is an unofficial third-party release. Prism’s 9B checkpoint derives from Qwen3.5-9B, copyright 2026 Alibaba Cloud. [Apache License](LICENSE) · [Prism’s 9B notice](licenses/prism-bonsai-2-9b-NOTICE.txt) · [Qwen3.5 license](licenses/qwen3.5-9b-LICENSE.txt)
 

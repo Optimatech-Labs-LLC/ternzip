@@ -48,7 +48,8 @@ def chat(path, prompt, context, maximum):
         raise ValueError("The output limit must be positive and fit inside the context.")
     start = time.perf_counter()
     if is_bonsai9(path):
-        from bonsai9 import ARCHIVE_SHA as archive_sha
+        from bonsai9 import archive_identity
+        _, archive_sha = archive_identity(path)
         from bonsai9_metal import load
     else:
         load, archive_sha = load_model, ARCHIVE_SHA

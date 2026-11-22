@@ -1,0 +1,60 @@
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1184,6 +1184,10 @@
+     }
+ }
+ 
++
++extern "C" LLAMA_API int ternzip9_rotation_format(uint32_t n) {
++    return n == 4096 ? GGML_TYPE_Q1_0 : GGML_TYPE_F32;
++}
+ void llama_model_base::load_stats(llama_model_loader & ml) {
+     pimpl->n_elements = ml.n_elements;
+     pimpl->n_bytes = ml.n_bytes;
+@@ -2051,7 +2055,7 @@
+                     throw std::runtime_error("failed to create Hadamard rotation context");
+                 }
+ 
+-                ggml_tensor * rotation = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, block_size, block_size);
++                ggml_tensor * rotation = ggml_new_tensor_2d(ctx.get(), (ggml_type)ternzip9_rotation_format(block_size), block_size, block_size);
+                 char rotation_name[GGML_MAX_NAME];
+                 snprintf(rotation_name, sizeof(rotation_name), "prism.hadamard.%u", block_size);
+                 ggml_set_name(rotation, rotation_name);
+@@ -2062,6 +2066,29 @@
+                 }
+                 ggml_backend_buffer_set_usage(buffer.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+ 
++                if (rotation->type == GGML_TYPE_Q1_0) {
++                    const size_t stride=ggml_row_size(rotation->type,block_size);
++                    const float scale=1.0f/sqrtf((float)block_size);
++                    const auto * traits=ggml_get_type_traits(rotation->type);
++                    std::vector<float> values(block_size);
++                    std::vector<uint8_t> encoded(stride*block_size);
++                    for (uint32_t row=0;row<block_size;++row) {
++                        for (uint32_t col=0;col<block_size;++col)
++                            values[col]=__builtin_parity(row&col) ? -scale : scale;
++                        traits->from_float_ref(values.data(),encoded.data()+row*stride,block_size);
++                    }
++                    ggml_backend_tensor_set(rotation,encoded.data(),0,encoded.size());
++                    ggml_backend_tensor_get(rotation,encoded.data(),0,encoded.size());
++                    for (uint32_t row=0;row<block_size;++row) {
++                        traits->to_float(encoded.data()+row*stride,values.data(),block_size);
++                        for (uint32_t col=0;col<block_size;++col) {
++                            const float expected=__builtin_parity(row&col) ? -scale : scale;
++                            if (values[col]!=expected) throw std::runtime_error("Ternzip rotation readback mismatch");
++                        }
++                    }
++                    LLAMA_LOG_INFO("ternzip rotation readback: %u entries, %zu allocated bytes verified\n",
++                                   block_size*block_size,ggml_backend_buffer_get_size(buffer.get()));
++                } else {
+                 std::vector<float> data((size_t) block_size * block_size);
+                 const float scale = 1.0f / sqrtf((float) block_size);
+                 for (uint32_t row = 0; row < block_size; ++row) {
+@@ -2077,6 +2104,7 @@
+                 }
+                 ggml_backend_tensor_set(rotation, data.data(), 0, data.size() * sizeof(float));
+ 
++                }
+                 std::vector<ggml_backend_buffer_ptr> buffers;
+                 buffers.emplace_back(std::move(buffer));
+                 pimpl->ctxs_bufs.emplace_back(std::move(ctx), std::move(buffers));

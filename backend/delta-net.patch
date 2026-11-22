@@ -1,0 +1,15 @@
+--- a/src/models/delta-net-base.cpp
++++ b/src/models/delta-net-base.cpp
+@@ -553,9 +553,9 @@
+ 
+     const bool keep = cparams.n_rs_seq > 0;
+ 
+-    GGML_ASSERT(state_rows == nullptr || keep); // rows mode is a ring-path optimization
+-
+-    if (!keep) {
++    GGML_ASSERT(!state_rows || keep || (mem_size == 1 && kv_head == 0 && n_seqs == 1 && n_seq_tokens == 1 && ssm_states_all->ne[1] == 1));
++
++    if (!keep && !state_rows) {
+         auto attn_out = build_delta_net(q, k, v, g, b, s, il);
+         ggml_tensor * output    = attn_out.first;
+         ggml_tensor * new_state = attn_out.second;

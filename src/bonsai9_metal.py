@@ -10,7 +10,8 @@ import struct
 import numpy as np
 
 from archive_io import checked_input
-from bonsai9 import ARCHIVE_SHA, ARCHIVE_SIZE, NineArchive
+from bonsai9 import NineArchive
+from versions9 import ARCHIVE_SIZE, archive_identity
 from gguf_tools import metadata_array
 from load_kernels import native
 from model_stream import PackedStream
@@ -169,8 +170,14 @@ class PagedStream:
     open_c_file = PackedStream.open_c_file
     read_into = PackedStream.read_into
 
-    def __init__(self, archive):
+    def __init__(self, archive, fast):
         self.archive = archive
+        self.strides = {}
+        hot = {f"blk.{layer}.ffn_{kind}.weight"
+               for kind, count in (("up", 32), ("down", 32), ("gate", 22))
+               for layer in range(count)} if fast else set()
+        if not hot.issubset(archive.by_name):
+            raise ValueError("Missing projection in the 9B execution layout")
         self.indices = [i for i, name in enumerate(archive.names) if name != "token_embd.weight"]
         header = tied_header(archive.g)
         struct.pack_into("<Q", header, 8, len(self.indices))
@@ -178,10 +185,17 @@ class PagedStream:
         for i in self.indices:
             name = archive.names[i]
             dims, kind, _ = archive.g.tensors[name]
+            extent = archive.logical[i + 1] - archive.logical[i]
+            if name in hot:
+                if kind != 143 or len(dims) != 2 or dims[0] % 128:
+                    raise ValueError("Unexpected type or shape for a 9B ternary projection")
+                kind = 142
+                extent += math.prod(dims) // 128 * 6
+                self.strides[i] = 34
             label = ("token_embd.weight" if name == "output.weight" else name).encode("ascii")
             header.extend(struct.pack("<Q", len(label)) + label + struct.pack("<I", len(dims)))
             header.extend(struct.pack("<" + "Q" * len(dims), *dims) + struct.pack("<IQ", kind, offsets[-1]))
-            offsets.append(offsets[-1] + archive.logical[i + 1] - archive.logical[i])
+            offsets.append(offsets[-1] + extent)
         header.extend(bytes(-len(header) % archive.g.alignment))
         self.header = np.frombuffer(header, np.uint8)
         self.edges = [len(header) + offset for offset in offsets]
@@ -196,14 +210,15 @@ class PagedStream:
             return self.header, pos
         index = bisect_right(self.edges, pos) - 1
         if index != self.index:
-            self.array = self.archive.record(self.indices[index])
+            tensor_index = self.indices[index]
+            self.array = self.archive.record(tensor_index, self.strides.get(tensor_index, 28))
             if self.array.nbytes != self.edges[index + 1] - self.edges[index]:
                 raise ValueError("Incorrect native tensor extent")
             self.index = index
         return self.array, pos - self.edges[index]
 
 
-def hadamard_bytes(gguf):
+def hadamard_bytes(gguf, llama, fast):
     """Ask the active Metal allocator for each rotation/sign buffer, including alignment."""
     lib = C.CDLL(str(backend_directory() / "libggml.0.dylib"))
     ptr, size = C.c_void_p, C.c_size_t
@@ -223,31 +238,45 @@ def hadamard_bytes(gguf):
     release = bind(lib, "ggml_free", None, ptr)
     widths = metadata_array(gguf, "prism.hadamard.sign_widths")
     block = gguf.metadata["prism.hadamard.block_size"]
+    rotation_type = bind(llama, "ternzip9_rotation_format", C.c_int, C.c_uint32)(block) if fast else 0
+    storage_bytes = bind(lib, "ggml_nbytes", size, ptr)
     total = 0
+    rotation_bytes = 0
     for x, y in [(block, block), *((w, 1) for w in widths)]:
         ctx = initialize(Init(overhead, None, True))
         if not ctx:
             raise RuntimeError("Cannot size auxiliary Metal tensors")
         try:
-            if not tensor(ctx, 0, x, y):
+            descriptor = tensor(ctx, rotation_type if y == block else 0, x, y)
+            if not descriptor:
                 raise RuntimeError("Cannot size a Metal weight buffer")
             measured = allocation(ctx, buffer_type)
-            if measured < x * y * 4:
+            if y == block:
+                rotation_bytes = measured
+            if measured < storage_bytes(descriptor):
                 raise ValueError("Unexpected Metal weight allocation")
             total += measured
         finally:
             release(ctx)
-    return total, (1, len(widths))
+    return total, (1, len(widths)), (block * block, rotation_bytes)
 
 
 def load(path, context, *, max_outputs=1):
     from chat_model import DECODER_RESERVE, WEIGHT_BUDGET
-    with checked_input(path, ARCHIVE_SIZE, ARCHIVE_SHA) as (file, data):
+    size, sha = archive_identity(path)
+    fast = size == ARCHIVE_SIZE
+    C.CDLL(str(backend_directory() / "libggml-metal.0.dylib"))
+    llama = C.CDLL(str(backend_directory() / "libllama.0.dylib"))
+    if fast:
+        if not hasattr(llama, "ternzip9_reuse_config"):
+            raise ValueError("This 9B archive requires the Ternzip v0.3.0 Metal backend.")
+        bind(llama, "ternzip9_reuse_config", None, C.c_uint)(8)
+    with checked_input(path, size, sha) as (file, data):
         archive = NineArchive(data)
-        rotation_bytes, counts = hadamard_bytes(archive.g)
+        rotation_bytes, counts, rotation = hadamard_bytes(archive.g, llama, fast)
         table = InputRows(archive, file)
         try:
-            engine = NativeEngine(PagedStream(archive), context, max_outputs=max_outputs, prefill_chunk=256,
+            engine = NativeEngine(PagedStream(archive, fast), context, max_outputs=max_outputs, prefill_chunk=256,
                                   backend_greedy=max_outputs == 1, input_table=table, text_position_axes=4)
         except BaseException:
             table.close()
@@ -255,6 +284,8 @@ def load(path, context, *, max_outputs=1):
         try:
             if engine.hadamard_buffer_counts != counts or not engine.weight_buffers_mib:
                 raise ValueError("The backend did not account for the expected native weights")
+            if fast and engine.rotation_readback != rotation:
+                raise ValueError("The packed Metal rotation failed readback verification")
             aligned = sum(math.ceil((mib + 0.005) * 1048576) for _, mib in engine.weight_buffers_mib)
             weight_bytes = max(engine.weight_bytes, aligned) + rotation_bytes + table.owned_bytes() + DECODER_RESERVE
             if weight_bytes > WEIGHT_BUDGET:

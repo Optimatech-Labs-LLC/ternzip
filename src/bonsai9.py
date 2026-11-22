@@ -11,14 +11,9 @@ from paired_weights import HEADER as MATRIX_HEADER, decode_tensor
 from predictor import CONFIG
 from row_options import ROW_HEADER
 
-MAGIC = b"QBons9R1"
-DIRECTORY = struct.Struct("<8sIIQ")
-SOURCE_NAME = "Ternary-Bonsai-2-9B-PTQ1_0.gguf"
-SOURCE_SIZE = 1_997_486_976
-SOURCE_SHA = "3561df7ac7d26a71ffa991ac2db740b10841c3a350aa2676ccd3ff5d428b4e8b"
-ARCHIVE_SIZE = 1_860_057_576
-ARCHIVE_SHA = "a53379d2406c3be10498475e9722818986e534e3bef5cd4690b35ae74bdbd40f"
+from versions9 import ARCHIVE_SHA, ARCHIVE_SIZE, MAGIC, SOURCE_NAME, SOURCE_SHA, SOURCE_SIZE, archive_identity
 
+DIRECTORY = struct.Struct("<8sIIQ")
 
 class NineArchive:
     def __init__(self, storage):
@@ -63,12 +58,17 @@ class NineArchive:
         self.sources = set(self.parents.values())
         self.cache = {}
 
-    def record(self, index):
+    def record(self, index, stride=28):
         """Decode one tensor, retaining trits only when a later matrix needs them."""
         name = self.names[index]
         start, end = self.physical[index:index + 2]
         data = memoryview(self.storage)[start:end]
         size = self.logical[index + 1] - self.logical[index]
+        if stride not in (28, 34):
+            raise ValueError("Unsupported ternary block layout")
+        if data[0] == 2:
+            from counted_trits9 import record
+            return record(self, index, stride)
         if data[0] == 0:
             raw = decompress(data[1:], size)
             if len(raw) != size or name in self.sources:
@@ -90,7 +90,7 @@ class NineArchive:
         retained = np.empty((rows, width), np.uint8) if name in self.sources else None
         with ThreadPoolExecutor(max_workers=4) as pool:
             blocks, _ = decode_tensor(data[1:len(data) - padding], rows, width, None, False,
-                                      pool, 28, previous_rows=reference, capture_rows=retained)
+                                      pool, stride, previous_rows=reference, capture_rows=retained)
         if retained is not None:
             self.cache[name] = retained
         if padding:

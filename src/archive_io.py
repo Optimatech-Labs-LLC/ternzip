@@ -62,7 +62,7 @@ def output_file(destination, size, expected):
 
 
 def is_bonsai9(path):
-    from bonsai9 import MAGIC
+    from versions9 import MAGIC
     with Path(path).open("rb") as stream:
         tag = stream.read(8)
     if tag not in (b"QTile001", MAGIC):
@@ -79,7 +79,7 @@ def restore(archive, destination=None):
     if is_bonsai9(archive):
         import bonsai9
         size, digest = bonsai9.SOURCE_SIZE, bonsai9.SOURCE_SHA
-        archive_size, archive_sha = bonsai9.ARCHIVE_SIZE, bonsai9.ARCHIVE_SHA
+        archive_size, archive_sha = bonsai9.archive_identity(archive)
 
         def chunks(data):
             return bonsai9.NineArchive(data).original_chunks()

@@ -1,0 +1,7 @@
+# Apple Silicon runtime for Ternzip 9B
+
+The v0.3.0 loader uses the released arm64 backend for ordinary single-stream chat. It preserves the model’s ternary weights and 16-bit block scales. Ternzip stores the Hadamard rotation exactly in a compact representation, reuses single-token graph operations and evaluates the four-tap convolution in parallel across channels. The execution layout uses two-bit slots for 86 feed-forward matrices. The rest of the ternary compute matrices use dense trits.
+
+The four patches in this directory apply to the same Prism source revision. The C++ changes cover the rotation, recurrent state and Qwen3.5 graph. The Metal changes cover the single-state write and the channel convolution. Apply them from the root of a clean upstream checkout with `patch -p1 < path/to/patch` for each file. The arm64 release contains the two modified libraries and the five unchanged upstream ggml libraries. The runtime carries the MIT license. [Pinned Prism source](https://github.com/PrismML-Eng/llama.cpp/tree/a15369706017f177cae8aa40b6b8592259a48806) · [Checksums used by the launcher](../src/metal9.json) · [License](LICENSE)
+
+The launcher fetches the versioned bundle and verifies its SHA-256 before installing it. For an offline setup, set `TERNZIP_9B_BACKEND_ARCHIVE` to a local copy of `ternzip-metal-macos-arm64-v0.3.0.tar.gz`. It verifies both the bundle and each extracted library. The restore command works without Metal.

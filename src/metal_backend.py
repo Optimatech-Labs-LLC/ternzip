@@ -1,5 +1,6 @@
 """Install the pinned arm64 Metal libraries for inference."""
 import hashlib
+import json
 import os
 from pathlib import Path
 import platform
@@ -30,31 +31,40 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def install(cache):
+def install(cache, *, fast9=False):
     if sys.platform != "darwin" or platform.machine() != "arm64":
         raise RuntimeError("Chat requires Apple Silicon and Metal.")
+    if fast9:
+        spec = json.loads(Path(__file__).with_name("metal9.json").read_text())
+        tag, bundle, url = spec["tag"], spec["bundle"], spec["url"]
+        expected_hash, files = spec["tarball_sha256"], spec["files"]
+        archive_env = "TERNZIP_9B_BACKEND_ARCHIVE"
+    else:
+        tag, bundle, url = TAG, BUNDLE, URL
+        expected_hash, files = TARBALL_SHA, FILES
+        archive_env = "TERNZIP_BACKEND_ARCHIVE"
     root = cache / "backend"
     root.mkdir(parents=True, exist_ok=True)
-    target = root / TAG
+    target = root / tag
     if target.is_dir():
-        if all((target / name).is_file() and digest(target / name) == sha for name, sha in FILES.items()):
+        if all((target / name).is_file() and digest(target / name) == sha for name, sha in files.items()):
             return target
         raise ValueError(f"Cached backend checksum mismatch in {target}. Move that directory and retry.")
     with tempfile.TemporaryDirectory(dir=root) as temp:
         stage = Path(temp)
-        source = os.environ.get("TERNZIP_BACKEND_ARCHIVE")
+        source = os.environ.get(archive_env)
         archive = Path(source) if source else stage / "runtime.tar.gz"
         if not source:
-            with urllib.request.urlopen(URL, timeout=90) as response, archive.open("xb") as out:
+            with urllib.request.urlopen(url, timeout=90) as response, archive.open("xb") as out:
                 shutil.copyfileobj(response, out)
-        if digest(archive) != TARBALL_SHA:
+        if digest(archive) != expected_hash:
             raise ValueError("Published backend archive SHA-256 mismatch")
         libraries = stage / "libraries"
         libraries.mkdir()
         with tarfile.open(archive, "r:gz") as tar:
-            for name, sha in FILES.items():
+            for name, sha in files.items():
                 path = libraries / name
-                with tar.extractfile(f"{BUNDLE}/{name}") as stream, path.open("xb") as out:
+                with tar.extractfile(f"{bundle}/{name}") as stream, path.open("xb") as out:
                     shutil.copyfileobj(stream, out)
                 if digest(path) != sha:
                     raise ValueError(f"Backend file SHA-256 mismatch for {name}")

@@ -150,6 +150,7 @@ class NativeEngine:
         self.weight_buffers_mib = []
         self.context_buffers_mib = []
         self.hadamard_buffer_counts = None
+        self.rotation_readback = None
         self.position = 0
         self.context_length = context_length
         self.max_outputs = max_outputs
@@ -172,6 +173,10 @@ class NativeEngine:
                 counts=re.search(rb"using (\d+) rotation\(s\) and (\d+) sign vector\(s\)",message)
                 if counts:
                     self.hadamard_buffer_counts=tuple(map(int,counts.groups()))
+            if b"ternzip rotation readback" in message:
+                checked = re.search(rb"readback: (\d+) entries, (\d+) allocated bytes verified", message)
+                if checked:
+                    self.rotation_readback = tuple(map(int, checked.groups()))
             if b"model buffer size" in message:
                 match = re.search(rb"(\S+) model buffer size\s*=\s*([\d.]+) MiB", message)
                 if match:

@@ -1,0 +1,273 @@
+--- a/src/models/qwen35.cpp
++++ b/src/models/qwen35.cpp
+@@ -2,6 +2,93 @@
+ #include "llama-impl.h"
+ #include "llama-memory-recurrent.h"
+ #include "llama-kv-cache.h"
++// Private, single-chat Metal graph specializations for the pinned Qwen3.5 runtime.
++#include <atomic>
++
++namespace {
++enum reuse_feature { snapshot = 1, conv_history = 2, no_empty_state = 4 };
++std::atomic<unsigned> reuse_flags{0};
++std::atomic<uint64_t> marked_states{0};
++std::atomic<uint64_t> direct_histories{0}, wide_convolutions{0};
++
++bool reads_snapshot(const ggml_tensor * t, const ggml_tensor * gdn, size_t prefix) {
++    return t && (t == gdn || (t->view_src == gdn && t->view_offs + ggml_nbytes(t) > prefix));
++}
++
++bool is_view_only(ggml_op op) {
++    return op == GGML_OP_VIEW || op == GGML_OP_RESHAPE ||
++           op == GGML_OP_TRANSPOSE || op == GGML_OP_PERMUTE;
++}
++
++// The standard GDN result is [attention | snapshot]. The ordinary scatter stays in
++// the graph. Metal may omit the snapshot store only when it actually folds that
++// scatter into GDN. A backend that does not fold it produces the ordinary snapshot.
++void mark_single_use_snapshots(ggml_cgraph * graph) {
++    const int count = ggml_graph_n_nodes(graph);
++    for (int i = 0; i < count; ++i) {
++        ggml_tensor * gdn = ggml_graph_node(graph, i);
++        if (gdn->op != GGML_OP_GATED_DELTA_NET || gdn->op_params[0] != 1 ||
++                !gdn->src[6] || (gdn->flags & GGML_TENSOR_FLAG_OUTPUT)) {
++            continue;
++        }
++        const ggml_tensor * v = gdn->src[2];
++        ggml_tensor * q = gdn->src[0];
++        if (v->ne[2] != 1 || v->ne[3] != 1 || q->ne[3] != 1 || q->op != GGML_OP_VIEW) {
++            continue;
++        }
++        const size_t prefix = size_t(v->ne[0]) * v->ne[1] * sizeof(float);
++        const size_t state_bytes = size_t(v->ne[0]) * prefix;
++        if (ggml_nbytes(gdn) != prefix + state_bytes) {
++            continue;
++        }
++        unsigned scatters = 0;
++        bool safe = true;
++        for (int j = i + 1; safe && j < count; ++j) {
++            const ggml_tensor * consumer = ggml_graph_node(graph, j);
++            if (reads_snapshot(consumer, gdn, prefix) && (consumer->flags & GGML_TENSOR_FLAG_OUTPUT)) {
++                safe = false;
++                break;
++            }
++            if (is_view_only(consumer->op)) {
++                continue;
++            }
++            for (int s = 0; s < GGML_MAX_SRC; ++s) {
++                const ggml_tensor * input = consumer->src[s];
++                if (!reads_snapshot(input, gdn, prefix)) {
++                    continue;
++                }
++                if (s == 0 && consumer->op == GGML_OP_SET_ROWS && input->view_src == gdn &&
++                        input->view_offs == prefix && ggml_is_contiguous(input) &&
++                        ggml_nbytes(input) == state_bytes && consumer->src[1]->type == GGML_TYPE_I64) {
++                    ++scatters;
++                } else {
++                    safe = false;
++                    break;
++                }
++            }
++        }
++        if (safe && scatters == 1) {
++            // A singleton sequence dimension has no second address. A zero batch
++            // stride explicitly declares this private view broadcast over that axis.
++            // The paired shader recognizes it only on a real one-sequence folded op.
++            q->nb[3] = 0;
++            ++marked_states;
++        }
++    }
++}
++} // namespace
++
++extern "C" LLAMA_API void ternzip9_reuse_config(unsigned flags) {
++    reuse_flags.store(flags);
++    marked_states.store(0);
++    direct_histories.store(0); wide_convolutions.store(0);
++}
++
++extern "C" LLAMA_API uint64_t ternzip9_reuse_graph_count(int which) {
++    if (which == 2) return wide_convolutions.load();
++    return which == 0 ? marked_states.load() : direct_histories.load();
++}
++
+ 
+ void llama_model_qwen35::load_arch_hparams(llama_model_loader & ml) {
+     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,       hparams.f_norm_rms_eps);
+@@ -80,8 +167,15 @@
+         } else {
+             // Linear attention (gated delta net) specific tensors
+             // Create tensors with calculated dimensions
++            const auto qkv_name = std::string(tn(LLM_TENSOR_ATTN_QKV,"weight",il));
++            const auto * qkv_meta = ml.get_tensor_meta(qkv_name.c_str());
++            const bool joined = qkv_meta && qkv_meta->ne[1] == 2*key_dim+2*value_dim;
++            if (joined) {
++                layer.wqkv = create_tensor(tn(LLM_TENSOR_ATTN_QKV,"weight",il), { n_embd,2*key_dim+2*value_dim },flags);
++            } else {
+             layer.wqkv           = create_tensor(tn(LLM_TENSOR_ATTN_QKV,       "weight", il), { n_embd, key_dim * 2 + value_dim }, TENSOR_NOT_REQUIRED);
+             layer.wqkv_gate      = create_tensor(tn(LLM_TENSOR_ATTN_GATE,      "weight", il), { n_embd, value_dim }, TENSOR_NOT_REQUIRED);
++            }
+             layer.ssm_conv1d     = create_tensor(tn(LLM_TENSOR_SSM_CONV1D,     "weight", il), { hparams.ssm_d_conv, conv_dim }, flags);
+             layer.ssm_dt         = create_tensor(tn(LLM_TENSOR_SSM_DT,         "bias",   il), { hparams.ssm_dt_rank }, flags);
+             layer.ssm_a          = create_tensor(tn(LLM_TENSOR_SSM_A_NOSCAN,             il), { hparams.ssm_dt_rank }, flags);
+@@ -91,9 +185,16 @@
+             layer.ssm_out        = create_tensor(tn(LLM_TENSOR_SSM_OUT,        "weight", il), { value_dim, n_embd }, flags);
+         }
+ 
++        const auto gate_name = std::string(tn(LLM_TENSOR_FFN_GATE,"weight",il));
++        const auto * gate_meta = ml.get_tensor_meta(gate_name.c_str());
++        if (gate_meta && gate_meta->ne[1] == 2*n_ff) {
++            layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE,"weight",il),{n_embd,2*n_ff},flags);
++            layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN,"weight",il),{n_ff,n_embd},flags);
++        } else {
+         layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", il), {n_embd,   n_ff}, flags);
+         layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", il), {  n_ff, n_embd}, flags);
+         layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", il), {n_embd,   n_ff}, flags);
++        }
+     };
+ 
+     auto load_block_mtp = [&](int il) {
+@@ -303,6 +404,10 @@
+     res->t_logits = cur;
+ 
+     ggml_build_forward_expand(gf, cur);
++    if ((reuse_flags.load() & snapshot) && gdn_state_rows_dev_ok && !cparams.cb_eval &&
++            cparams.n_rs_seq == 0 && ubatch.n_tokens == 1 && ubatch.n_seqs == 1) {
++        mark_single_use_snapshots(gf);
++    }
+ }
+ 
+ std::pair<ggml_tensor *, ggml_tensor *> llama_model_qwen35::graph::build_qkvz(
+@@ -312,6 +417,15 @@
+     const int64_t n_seq_tokens = ubatch.n_seq_tokens;
+ 
+     ggml_tensor * qkv_mixed = build_lora_mm(model.layers[il].wqkv, input, model.layers[il].wqkv_s);
++    if (!model.layers[il].wqkv_gate) {
++        const auto rows = hparams.ssm_d_state*hparams.ssm_dt_rank;
++        const auto qkvs = qkv_mixed->ne[0]-rows;
++        auto * z = ggml_view_2d(ctx0,qkv_mixed,rows,qkv_mixed->ne[1],qkv_mixed->nb[1],qkvs*sizeof(float));
++        auto * qkv = ggml_view_2d(ctx0,qkv_mixed,qkvs,qkv_mixed->ne[1],qkv_mixed->nb[1],0);
++        z = ggml_cont(ctx0,z);
++        qkv = ggml_cont_3d(ctx0,qkv,qkvs,n_seq_tokens,n_seqs);
++        return {qkv,z};
++    }
+     qkv_mixed = ggml_reshape_3d(ctx0, qkv_mixed, qkv_mixed->ne[0], n_seq_tokens, n_seqs);
+     cb(qkv_mixed, "linear_attn_qkv_mixed", il);
+ 
+@@ -344,7 +458,13 @@
+     // Order: joint QG projection, QG split, Q norm, KV projection, K norm, RoPE, attention
+ 
+     // Qwen3Next uses a single Q projection that outputs query + gate
+-    ggml_tensor * Qcur_full = build_lora_mm(model.layers[il].wq, cur, model.layers[il].wq_s); // [ (n_embd_head * 2) * n_head, n_tokens ]
++    ggml_tensor * packed = model.layers[il].wqkv ? build_lora_mm(model.layers[il].wqkv,cur) : nullptr;
++    const int64_t qrows = 2*n_embd_head*n_head, kvrows=n_embd_head*n_head_kv;
++    auto view_rows = [&](int64_t offset, int64_t rows) {
++        auto * v = ggml_view_2d(ctx0,packed,rows,n_tokens,packed->nb[1],offset*sizeof(float));
++        return ggml_is_contiguous(v) ? v : ggml_cont(ctx0,v);
++    };
++    ggml_tensor * Qcur_full = packed ? view_rows(0,qrows) : build_lora_mm(model.layers[il].wq, cur, model.layers[il].wq_s); // [ (n_embd_head * 2) * n_head, n_tokens ]
+     cb(Qcur_full, "Qcur_full", il);
+ 
+     ggml_tensor * Qcur = ggml_view_3d(ctx0, Qcur_full, n_embd_head, n_head, n_tokens,
+@@ -356,10 +476,10 @@
+     Qcur = build_norm(Qcur, model.layers[il].attn_q_norm, nullptr, LLM_NORM_RMS, il);
+     cb(Qcur, "Qcur_normed", il);
+ 
+-    ggml_tensor * Kcur = build_lora_mm(model.layers[il].wk, cur, model.layers[il].wk_s);
++    ggml_tensor * Kcur = packed ? view_rows(qrows,kvrows) : build_lora_mm(model.layers[il].wk, cur, model.layers[il].wk_s);
+     cb(Kcur, "Kcur", il);
+ 
+-    ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv, cur, model.layers[il].wv_s);
++    ggml_tensor * Vcur = packed ? view_rows(qrows+kvrows,kvrows) : build_lora_mm(model.layers[il].wv, cur, model.layers[il].wv_s);
+     cb(Vcur, "Vcur", il);
+ 
+     // Apply K normalization
+@@ -481,7 +601,21 @@
+     const int64_t conv_kernel_size = conv_kernel->ne[0];
+     const int64_t conv_channels    = d_inner + 2 * hparams.ssm_n_group * hparams.ssm_d_state;
+ 
+-    ggml_tensor * conv_input = build_conv_state(inp, conv_states_all, qkv_mixed, conv_kernel_size, conv_channels, il);
++    const bool single_live_slot = n_seqs == 1 && n_seq_tokens == 1 &&
++            cparams.n_rs_seq == 0 && mctx_cur->get_size() == 1 && mctx_cur->get_n_rs() == 1 &&
++            mctx_cur->get_head() == 0 && mctx_cur->get_rs_z() < 0 && !inp->s_rpl_ctrl &&
++            gdn_state_rows_dev_ok && !cparams.cb_eval;
++    ggml_tensor * conv_input;
++    if ((reuse_flags.load() & conv_history) && single_live_slot && conv_states_all->ne[1] == 1) {
++        auto * history = ggml_reshape_3d(ctx0, conv_states_all, conv_kernel_size-1, conv_channels, 1);
++        conv_input = ggml_concat(ctx0, history, ggml_transpose(ctx0, qkv_mixed), 0);
++        auto * next = ggml_view_3d(ctx0, conv_input, conv_kernel_size-1, conv_channels, 1,
++                                  conv_input->nb[1], conv_input->nb[2], ggml_element_size(conv_input));
++        ggml_build_forward_expand(gf, ggml_cpy(ctx0, next, conv_states_all));
++        ++direct_histories;
++    } else {
++        conv_input = build_conv_state(inp, conv_states_all, qkv_mixed, conv_kernel_size, conv_channels, il);
++    }
+ 
+     // ring path: read per-seq live state directly from the cache inside the
+     // fused GDN op (rows mode) instead of a gather per layer.
+@@ -496,7 +630,10 @@
+     // row in plane 0, gathered with its own row indices (s_copy carries the conv rollback plane)
+     const bool gdn_rpl = inp->s_rpl_ctrl != nullptr;
+ 
+-    const bool gdn_state_rows = gdn_state_rows_env && gdn_state_rows_dev_ok && cparams.n_rs_seq > 0 && !gdn_rpl;
++    const bool gdn_state_rows = gdn_state_rows_env && gdn_state_rows_dev_ok && !gdn_rpl &&
++            (cparams.n_rs_seq > 0 || (n_seqs == 1 && n_seq_tokens == 1 &&
++             mctx_cur->get_size() == 1 && mctx_cur->get_head() == 0 && mctx_cur->get_n_rs() == 1 &&
++             ssm_states_all->ne[1] == 1 && cparams.fused_gdn_ar));
+ 
+     ggml_tensor * state;
+     if (gdn_rpl) {
+@@ -505,7 +642,11 @@
+         state = ggml_reshape_4d(ctx0, state, head_v_dim, head_v_dim, num_v_heads, n_seqs);
+         cb(state, "state_predelta", il);
+     } else if (gdn_state_rows) {
+-        state = build_rs_cache_view(inp, ssm_states_all, hparams.n_embd_s(), n_seqs);
++        if ((reuse_flags.load() & no_empty_state) && single_live_slot && ssm_states_all->ne[1] == 1) {
++            state = ggml_reshape_2d(ctx0, ssm_states_all, hparams.n_embd_s(), 1);
++        } else {
++            state = build_rs_cache_view(inp, ssm_states_all, hparams.n_embd_s(), n_seqs);
++        }
+         cb(state, "state_cache_view", il);
+     } else {
+         state = build_rs(inp, ssm_states_all, hparams.n_embd_s(), n_seqs);
+@@ -513,7 +654,24 @@
+         cb(state, "state_predelta", il);
+     }
+ 
+-    ggml_tensor * conv_output_proper = ggml_ssm_conv(ctx0, conv_input, conv_kernel);
++    ggml_tensor * conv_output_proper;
++    if ((reuse_flags.load() & 8) && single_live_slot && conv_kernel_size == 4 &&
++            conv_input->type == GGML_TYPE_F32 && conv_kernel->type == GGML_TYPE_F32 &&
++            ggml_is_contiguous(conv_input) && ggml_is_contiguous(conv_kernel) &&
++            conv_input->ne[0] == 4 && conv_input->ne[1] == conv_channels &&
++            ggml_nelements(conv_input) == 4*conv_channels && ggml_nelements(conv_kernel) == 4*conv_channels) {
++        // A four-tap independent dot per channel is a depthwise 1x4 convolution.
++        auto * w = ggml_reshape_4d(ctx0, conv_kernel, 1, 4, 1, conv_channels);
++        auto * x = ggml_reshape_4d(ctx0, conv_input, 1, 4, conv_channels, 1);
++        // The width is one. This stride has no effect on any element address and
++        // selects the existing channel-tiled Metal dispatch without a transpose.
++        x->nb[0] = x->nb[2] * 2;
++        auto * dots = ggml_conv_2d_dw_direct(ctx0, w, x, 1, 1, 0, 0, 1, 1);
++        conv_output_proper = ggml_reshape_3d(ctx0, dots, conv_channels, 1, 1);
++        ++wide_convolutions;
++    } else {
++        conv_output_proper = ggml_ssm_conv(ctx0, conv_input, conv_kernel);
++    }
+     cb(conv_output_proper, "conv_output_raw", il);
+ 
+     ggml_tensor * conv_output_silu = ggml_silu(ctx0, conv_output_proper);
+@@ -607,6 +765,14 @@
+ ggml_tensor * llama_model_qwen35::graph::build_layer_ffn(ggml_tensor * cur, const int il) {
+     // Qwen3.5 does not use MoE FFN
+     GGML_ASSERT(model.layers[il].ffn_gate_inp == nullptr);
++    if (!model.layers[il].ffn_up) {
++        auto * both = build_lora_mm(model.layers[il].ffn_gate,cur);
++        const int64_t n=both->ne[0]/2;
++        auto * gate=ggml_view_2d(ctx0,both,n,both->ne[1],both->nb[1],0);
++        auto * up=ggml_view_2d(ctx0,both,n,both->ne[1],both->nb[1],n*sizeof(float));
++        cur=ggml_swiglu_split(ctx0,gate,up);
++        return build_lora_mm(model.layers[il].ffn_down,cur);
++    }
+ 
+     cur = build_ffn(cur,
+         model.layers[il].ffn_up, NULL, model.layers[il].ffn_up_s,

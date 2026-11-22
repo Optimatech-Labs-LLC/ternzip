@@ -99,6 +99,9 @@ def inverse(payload,shape,method):
 
 def restore_meta(frame,rows,width,mode):
     tag=frame[0]
+    if tag in (201, 204):
+        from scale_words9 import restore
+        return restore(frame, rows, width, mode)
     groups=rows*width//128
     contexts=VOCAB_CONTEXTS if mode==64 else CONTEXTS[mode]
     tail=rows+width+4*contexts

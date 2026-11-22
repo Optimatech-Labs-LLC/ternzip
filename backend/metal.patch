@@ -1,0 +1,32 @@
+--- a/ggml/src/ggml-metal/kernels/gated_delta_net.metal
++++ b/ggml/src/ggml-metal/kernels/gated_delta_net.metal
+@@ -184,7 +184,9 @@
+         device float * dst_state = (device float *) (dst) + attn_size + state_out_base;
+         FOR_UNROLL (short j = 0; j < SEG; j++) {
+             const short is = lane*SEG + j;
+-            dst_state[is] = ls[j];
++            if (!(HAS_ROWS && WRITE_ROWS && args.ne22 == 1 && args.ne23 == 1 && args.nb03 == 0)) {
++                dst_state[is] = ls[j];
++            }
+         }
+ 
+         if (WRITE_ROWS) {
+--- a/ggml/src/ggml-metal/kernels/conv.metal
++++ b/ggml/src/ggml-metal/kernels/conv.metal
+@@ -451,6 +451,16 @@
+         return;
+     }
+ 
++    if (sizeof(TK) == sizeof(float) && args.N == 1 && args.IW == 1 && args.IH == 4 &&
++            args.OW == 1 && args.OH == 1 && args.KW == 1 && args.KH == 4 &&
++            args.s0 == 1 && args.s1 == 1 && args.p0 == 0 && args.p1 == 0 &&
++            args.d0 == 1 && args.d1 == 1 && args.nb01 == 4 && args.nb02 == 16 &&
++            args.nb10 == 32 && args.nb11 == 4 && args.nb12 == 16 && args.nb2 == 4) {
++        float sumf = 0.0f;
++        sumf += dot(((device const float4 *)src)[c], ((device const float4 *)weights)[c]);
++        ((device float *)dst)[c] = sumf;
++        return;
++    }
+     const int32_t oh = tgpig.y;
+     const int32_t own = tgpig.z;
+     const int32_t ow = own % args.OW;

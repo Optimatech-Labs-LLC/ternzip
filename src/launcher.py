@@ -38,6 +38,7 @@ def main():
         raise RuntimeError("This release uses CPython 3.14 with compression.zstd.")
     from archive_io import ARCHIVE_NAME
     parser = argparse.ArgumentParser(prog="ternzip", description="Lossless ternary model archive tools.")
+    parser.add_argument("--version", action="version", version="ternzip v0.3.0")
     actions = parser.add_subparsers(dest="command", required=True)
     restore_cmd = actions.add_parser("restore", help="Write and verify the exact official GGUF")
     restore_cmd.add_argument("archive", type=Path)
@@ -54,6 +55,12 @@ def main():
     chat_cmd.add_argument("--max-tokens", type=int, default=128)
     args = parser.parse_args()
     cache = Path(os.environ.get("TERNZIP_CACHE", Path.home() / ".cache" / "ternzip")).expanduser().resolve()
+    fast9 = False
+    if args.command in ("restore", "verify", "chat"):
+        from archive_io import is_bonsai9
+        if is_bonsai9(args.archive):
+            from versions9 import ARCHIVE_SIZE, archive_identity
+            fast9 = archive_identity(args.archive)[0] == ARCHIVE_SIZE
     if not dependencies_ready():
         env = cache / "python-3.14-v1"
         python = env / "bin/python"
@@ -71,7 +78,7 @@ def main():
         os.environ["TERNZIP_NATIVE"] = str(build(cache))
         if args.command == "chat":
             from metal_backend import install
-            os.environ["TERNZIP_BACKEND"] = str(install(cache))
+            os.environ["TERNZIP_BACKEND"] = str(install(cache, fast9=fast9))
     if args.command in ("restore", "verify"):
         from archive_io import restore, source_name
         output = (args.output or Path(source_name(args.archive))) if args.command == "restore" else None
