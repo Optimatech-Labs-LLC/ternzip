@@ -1,0 +1,71 @@
+{
+  "gguf": {
+    "chat_runs": 24,
+    "total_output_tokens": 3021,
+    "median_chat_decode_tps": 19.86945749221497,
+    "minimum_tps": 19.38817324842054,
+    "maximum_tps": 20.780336261920493,
+    "load_seconds": [
+      1.5103753750445321,
+      1.4334024999989197,
+      1.5047601669793949
+    ],
+    "median_load_seconds": 1.5047601669793949,
+    "peak_rss_bytes": [
+      8038105088,
+      8037990400,
+      8037351424
+    ],
+    "reported_model_tensor_bytes": 7195047936,
+    "native_model_buffers_mib": [
+      [
+        "CPU",
+        322.07
+      ],
+      [
+        "MTL0",
+        6539.66
+      ]
+    ]
+  },
+  "archive": {
+    "chat_runs": 24,
+    "total_output_tokens": 3021,
+    "median_chat_decode_tps": 20.130481125811208,
+    "minimum_tps": 17.905381493584784,
+    "maximum_tps": 20.78615019978218,
+    "load_seconds": [
+      58.74356679106131,
+      58.586476041935384,
+      59.180334500037134
+    ],
+    "median_load_seconds": 58.74356679106131,
+    "peak_rss_bytes": [
+      8516370432,
+      8536915968,
+      8531345408
+    ],
+    "reported_model_tensor_bytes": 7195047936,
+    "native_model_buffers_mib": [
+      [
+        "CPU",
+        322.07
+      ],
+      [
+        "MTL0",
+        6539.66
+      ]
+    ]
+  },
+  "matching_chats": 24,
+  "compared_chats": 24,
+  "machine": [
+    "Apple M4 Pro"
+  ],
+  "sampled_context": 1024,
+  "maximum_output_tokens_per_chat": 128,
+  "arithmetic": "102",
+  "archive_sha256": "3f78ad4a4c6389ab4908eb3b64be80faaf95a48376bfb9bca728d0220aa679a2",
+  "baseline_gguf_sha256": "3907dc1658db1f78a9826bf8d5bcb8dc65db0d466388937af57f2294fae62ec1",
+  "runtime_sha256": "b0645436f65c5eee2e697a1313e4219052706691fdc967fd219120db715e0bfc"
+}

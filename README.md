@@ -4,10 +4,15 @@ Ternzip compresses Prism ML’s ternary language models. One command restores th
 
 | Prism checkpoint | Original GGUF | Ternzip download | Bytes saved |
 | --- | ---: | ---: | ---: |
+| Ternary Bonsai 2 27B · PTQ1_0 | 5,946,648,928 | 5,512,286,013 | 434,362,915 (7.30%) |
 | Ternary Bonsai 2 9B · PTQ1_0 | 1,997,486,976 | 1,834,157,871 | 163,329,105 (8.18%) |
 | Ternary Bonsai 8B · Q2_0 | 2,182,184,672 | 1,623,736,952 | 558,447,720 (25.59%) |
 
 The 9B download saving uses Prism’s dense PTQ1_0 as its baseline. The same Ternzip archive saves 24.11% against Prism’s PQ2_0 file and 28.26% against its Q2_0 file. Prism’s fork executes all three packings of the same ternary weights. Prism recommends PQ2_0 by default on Apple Silicon. Q2_0 also runs in upstream llama.cpp b11556 and later. [Prism’s packing guide](https://huggingface.co/prism-ml/Ternary-Bonsai-2-9B-gguf#choosing-a-packing) · [9B archive](https://huggingface.co/optimatechlabs/ternzip-9b) · [8B archive](https://huggingface.co/optimatechlabs/ternzip-8b)
+
+## Ternzip v0.4.0 for Ternary Bonsai 2 27B
+
+One 5.512 GB archive restores all three of Prism’s 27B language GGUFs byte for byte. The three layouts contain the same weights and total 20.779 GB as separate files. Keeping one archive saves 73.47% before storage deduplication. On a 48 GB M4 Pro, warm startup took 58.74 s from the archive and 1.50 s from restored PQ2_0. Both generated about 20 tokens/s. [27B results and restore commands](models/27b/README.md) · [27B archive](https://huggingface.co/optimatechlabs/ternzip-27b) · [v0.4.0 Mac tools](https://github.com/Optimatech-Labs-LLC/ternzip/releases/download/v0.4.0/ternzip-27b-tools-macos-arm64.tar.gz)
 
 ## Ternzip v0.3.1 on Apple Silicon
 
